@@ -1,0 +1,8 @@
+lui   a0,0x12345              a0=12345000
+auipc a1,0x00001              a1=800010a0
+lui   a2,0x80009              a2=80009000
+lw    t0,0(a2)                t0=00000BFF0A
+lh    t1,2(a2)                t1=0000000B
+lhu   t2,2(a2)                t2=0000000B
+lb    t3,1(a2)                t3=FFFFFFFF
+lbu   t4,1(a2)                t4=000000FF
