@@ -8,18 +8,6 @@ const char* nomex[32] = { "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0"
                             "a3", "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 const uint32_t offset = 0x80000000;
 
-void print_binary(uint32_t n) {
-    for (int i = 31; i >= 0; i--) {
-        printf("%c", (n & (1u << i)) ? '1' : '0');
-        if (i % 8 == 0 && i != 0) {
-            printf("_");
-        } else if (i % 4 == 0 && i != 0) {
-            printf(" ");
-        }
-    }
-    printf("\n");
-}
-
 void load_hex(FILE *entrada, uint8_t* mem, uint32_t offset){
     char token[16];
     uint32_t curr = 0; //endereço atual 
@@ -63,6 +51,7 @@ void S_type(int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t funct3, FILE* saida, 
             break;
         }
         default:
+            printf("unknown instruction\n");
     }
 }
 
@@ -137,6 +126,7 @@ void I_type_imm(int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* said
                 break;
         }
         default:
+            printf("unknown instruction\n");
 
     }
 }
@@ -184,6 +174,7 @@ void I_type_load(int16_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* sai
                 nomex[rd], endereco, (uint32_t)x[rd]);
         }
         default:
+            printf("unknown instruction\n");
     }
 
 }
@@ -233,13 +224,13 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
                 x[rd] = (x[rs1] < x[rs2])?1:0;
                 fprintf(saida,"slt    %s,%s,%s     %s=(0x%08x<0x%08x)=%u\n", 
                         nomex[rd], nomex[rs1], nomex[rs2], nomex[rd], 
-                        x[rs1], x[rs2], x[rd]);
+                        prev_rs1, prev_rs2, x[rd]);
             }else{ //mulhsu
-                int64_t result = (int64_t)(int32_t)x[rs1] * (uint64_t)x[rs2];
-                x[rd] = (result >> 32);
+                int64_t res = (int64_t)(int32_t)prev_rs1* (uint64_t)(uint32_t)prev_rs2;
+                x[rd] = (int32_t)(res >> 32);
                 fprintf(saida,"mulhsu %s,%s,%s     %s=0x%08x*0x%08x=0x%08x\n",
                        nomex[rd], nomex[rs1], nomex[rs2],
-                       nomex[rd], x[rs1], x[rs2], x[rd]);
+                       nomex[rd], prev_rs1, prev_rs2, x[rd]);
             }
             break;
         }
@@ -250,9 +241,9 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
                     nomex[rd], nomex[rs1], nomex[rs2],
                     nomex[rd], x[rs1], x[rs2], x[rd]);                
             }else{ //mulhu
-                int64_t res = (uint64_t)(int32_t)x[rs1] * (uint64_t)x[rs2];
-                x[rd] = (res >> 32);
-                fprintf(saida,"mulh   %s,%s,%s     %s=0x%08x*0x%08x=0x%08x\n",
+                uint64_t res = (uint64_t)(int32_t)x[rs1] * (uint64_t)x[rs2];
+                x[rd] = (int32_t)(res >> 32);
+                fprintf(saida,"mulhu  %s,%s,%s     %s=0x%08x*0x%08x=0x%08x\n",
                        nomex[rd], nomex[rs1], nomex[rs2],
                        nomex[rd], prev_rs1, prev_rs2, x[rd]);
             }
@@ -327,7 +318,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
             break; 
         }
         default:
-            fprintf(saida,"error: unknown R-type instrucao funct3=0x%02x funct7=0x%02x\n", funct3, funct7);  
+            printf("unknown instruction\n"); 
     }
 }
 
@@ -409,12 +400,8 @@ int main (int argc, char *argv[]){
 
     uint32_t pc = offset;
     uint8_t flg = 1;
-    int k = 0;
 
     while(flg){
-        k++;
-        //printf("2 - %s : %08x\n", nomex[2], x[2]);
-        printf("%d : 0x%08x \n", k , pc);
         uint32_t instrucao = ((uint32_t*)mem)[(pc - offset) >> 2];
         uint8_t opcode = instrucao & 0b1111111;              // bits 6:0
         uint8_t rd     = (instrucao >> 7) & 0b11111;         // bits 11:7
@@ -502,12 +489,11 @@ int main (int argc, char *argv[]){
             }
             default:{
                 flg = 0;
-                printf("error: unknown instrucao opcode at pc = 0x%08x\n", pc);
+                printf("error: unknown instruction opcode at pc = 0x%08x\n", pc);
             }
         }
         if(x[0] != 0) x[0] = 0;
         pc += 4;
-        printf("-------------------\n");
     }
     fclose(saida);
 }
