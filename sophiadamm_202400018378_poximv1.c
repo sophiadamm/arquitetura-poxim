@@ -211,7 +211,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
                     nomex[rd], nomex[rs1], nomex[rs2], nomex[rd], 
                     prev_rs1, shamt, x[rd]);
             }else{ //mulh
-                int64_t res = (int64_t)(int32_t)x[rs1] * (int64_t)x[rs2]; // dois casting se não expande errado
+                int64_t res = (int64_t)x[rs1] * (int64_t)x[rs2];
                 x[rd] = (res >> 32);
                 fprintf(saida,"mulh   %s,%s,%s     %s=0x%08x*0x%08x=0x%08x\n",
                        nomex[rd], nomex[rs1], nomex[rs2],
@@ -239,7 +239,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
                 x[rd] = ((uint32_t)x[rs1] < (uint32_t)x[rs2]) ? 1 : 0;
                 fprintf(saida,"sltu   %s,%s,%s     %s=(0x%08x<0x%08x)=%u\n",
                     nomex[rd], nomex[rs1], nomex[rs2],
-                    nomex[rd], x[rs1], x[rs2], x[rd]);                
+                    nomex[rd], prev_rs1, prev_rs2, x[rd]);                
             }else{ //mulhu
                 uint64_t res = (uint64_t)(int32_t)x[rs1] * (uint64_t)x[rs2];
                 x[rd] = (int32_t)(res >> 32);
@@ -272,7 +272,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
                 x[rd] = (uint32_t)x[rs1] >> shamt;
                 fprintf(saida,"srl    %s,%s,%s     %s=0x%08x>>%05u=0x%08x\n", 
                     nomex[rd], nomex[rs1], nomex[rs2],
-                    nomex[rd], x[rs1], shamt, x[rd]);
+                    nomex[rd], prev_rs1, shamt, x[rd]);
             }else if (funct7 == 0x20){ //Shift Right Arithmetic (sra) - considera o sinal
                 x[rd] = (int32_t)x[rs1] >> shamt;
                 fprintf(saida,"sra    %s,%s,%s     %s=0x%08x>>>%05u=0x%08x\n", 
@@ -307,13 +307,13 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
                 x[rd] = x[rs1] & x[rs2];
                 fprintf(saida,"and    %s,%s,%s     %s=0x%08x&0x%08x=0x%08x",
                     nomex[rd], nomex[rs1], nomex[rs2],nomex[rd],
-                    x[rs1], x[rs2], x[rd]);
+                    prev_rs1, prev_rs2, x[rd]);
             }else{ // remu
                 if (x[rs2] == 0) x[rd] = x[rs1];
                 else x[rd] = (uint32_t)x[rs1] % (uint32_t)x[rs2];
                 fprintf(saida,"remu   %s,%s,%s     %s=0x%08x%%0x%08x=0x%08x\n",
                        nomex[rd], nomex[rs1], nomex[rs2],
-                       nomex[rd], x[rs1], x[rs2], x[rd]);
+                       nomex[rd], prev_rs1, prev_rs2, x[rd]);
             }
             break; 
         }
@@ -455,10 +455,10 @@ int main (int argc, char *argv[]){
                 break;
             }
             case 0b1100111:{ // jalr -> TIPO I
-                x[rd] = pc + 4;
                 uint32_t novo_pc = (x[rs1] + (int32_t)immI);
                 fprintf(saida, "jalr   %s,%s,0x%03x   pc=0x%08x+0x%08x,%s=0x%08x\n",
-                        nomex[rd], nomex[rs1], immI, x[rs1], (int32_t)immI, nomex[rd], x[rd]);
+                        nomex[rd], nomex[rs1], immI, x[rs1], (int32_t)immI, nomex[rd], pc + 4);
+                x[rd] = pc + 4;
                 pc = novo_pc - 4;
                 break;
             }
