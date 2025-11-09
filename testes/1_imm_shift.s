@@ -3,15 +3,15 @@
 .global main
 main:
     li      t0, 0x0000F00F
-    li      t1, 0x00000004
+    li      t1, 4
 
-    # I-type immediate arithmetic
+    # I-type immediate arithmetic (imediatos reduzidos para 12-bit assinado)
     addi    s0, t0, 0x010    # s0 = t0 + 0x10
     andi    s1, t0, 0x0FF    # s1 = t0 & 0xFF
-    ori     s2, t0, 0x00F0   # s2 = t0 | 0xF0
-    xori    s3, t0, 0x0F0F   # s3 = t0 ^ 0x0F0F
-    slti    s4, t0, 0x1000   # slti (signed compare)
-    sltiu   s5, t0, 0x1000   # sltiu (unsigned compare)
+    ori     s2, t0, 0x00F0   # s2 = t0 | 0xF0  (0x00F0 cabe em 12 bits)
+    xori    s3, t0, 0x00F    # xori com valor <= 0x7FF
+    slti    s4, t0, 0x100    # slti com imediato menor
+    sltiu   s5, t0, 0x100    # sltiu idem
 
     # shift immediate forms (slli, srli, srai)
     slli    s6, t0, 4
