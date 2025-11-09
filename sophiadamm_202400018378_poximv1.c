@@ -424,6 +424,7 @@ int main (int argc, char *argv[]){
             }
             case 0b0100011:{ // S - type (store)
                 int16_t immS = (funct7 << 5) | rd;
+                if (immS & 0x800) immS |= 0xF000;
                 S_type(immS, rs1, rs2, funct3, saida, mem);
                 break;
             }
