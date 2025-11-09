@@ -241,8 +241,9 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
                     nomex[rd], nomex[rs1], nomex[rs2],
                     nomex[rd], prev_rs1, prev_rs2, x[rd]);                
             }else{ //mulhu
-                uint64_t res = (uint64_t)(int32_t)x[rs1] * (uint64_t)x[rs2];
-                x[rd] = (int32_t)(res >> 32);
+                uint64_t res = (uint64_t)(uint32_t)x[rs1] * (uint64_t)(uint32_t)x[rs2];
+                uint32_t high = (uint32_t)(res >> 32);
+                x[rd] = (int32_t)high;
                 fprintf(saida,"mulhu  %s,%s,%s     %s=0x%08x*0x%08x=0x%08x\n",
                        nomex[rd], nomex[rs1], nomex[rs2],
                        nomex[rd], prev_rs1, prev_rs2, x[rd]);
