@@ -190,7 +190,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
                 x[rd] = x[rs1] + x[rs2];
 
             }else if(funct7 == 0x20) { // sub
-                fprintf(saida,"add    %s,%s,%s     %s=0x%08x-0x%08x=0x%08x\n", 
+                fprintf(saida,"sub    %s,%s,%s     %s=0x%08x-0x%08x=0x%08x\n", 
                     nomex[rd], nomex[rs1], nomex[rs2], nomex[rd], 
                     x[rs1], x[rs2], x[rs1] - x[rs2]);                
                 x[rd] = x[rs1] - x[rs2];
