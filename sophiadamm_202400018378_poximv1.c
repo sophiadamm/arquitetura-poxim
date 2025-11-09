@@ -207,7 +207,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
             if(funct7 == 0x00){ //sll
                 uint32_t shamt = x[rs2] & 0b11111;
                 x[rd] = (uint32_t)x[rs1] << shamt;
-                fprintf(saida,"sll    %s,%s,%s     %s=0x%08x<<%05u=0x%08x", 
+                fprintf(saida,"sll    %s,%s,%s     %s=0x%08x<<%05u=0x%08x\n", 
                     nomex[rd], nomex[rs1], nomex[rs2], nomex[rd], 
                     prev_rs1, shamt, x[rd]);
             }else{ //mulh
@@ -290,7 +290,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
         case 0x6: /*Or, Resto com Sinal*/{
             if(funct7 == 0x00){
                 x[rd] = x[rs1] | x[rs2];
-                fprintf(saida,"or     %s,%s,%s     %s=0x%08x|0x%08x=0x%08x",
+                fprintf(saida,"or     %s,%s,%s     %s=0x%08x|0x%08x=0x%08x\n",
                     nomex[rd], nomex[rs1], nomex[rs2],nomex[rd],
                     prev_rs1, prev_rs2, x[rd]);
             }else{ //rem
@@ -305,7 +305,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
         case 0x7: /*And, Resto sem Sinal*/ {
             if(funct7 == 0x00){ //and
                 x[rd] = x[rs1] & x[rs2];
-                fprintf(saida,"and    %s,%s,%s     %s=0x%08x&0x%08x=0x%08x",
+                fprintf(saida,"and    %s,%s,%s     %s=0x%08x&0x%08x=0x%08x\n",
                     nomex[rd], nomex[rs1], nomex[rs2],nomex[rd],
                     prev_rs1, prev_rs2, x[rd]);
             }else{ // remu
@@ -372,7 +372,6 @@ void B_type(int32_t imm, uint8_t rs1, uint8_t rs2, uint8_t funct3, FILE* saida, 
             break;
         }
     }
-
     if(flg) *pc += imm - 4;
 }
 
@@ -492,7 +491,7 @@ int main (int argc, char *argv[]){
                 printf("error: unknown instruction opcode at pc = 0x%08x\n", pc);
             }
         }
-        if(x[0] != 0) x[0] = 0;
+        x[0] = 0;
         pc += 4;
     }
     fclose(saida);
