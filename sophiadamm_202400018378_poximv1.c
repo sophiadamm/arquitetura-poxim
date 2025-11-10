@@ -8,16 +8,15 @@ const char* nomex[32] = { "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0"
                             "a3", "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
 const uint32_t offset = 0x80000000;
 
-void load_hex(FILE *entrada, uint8_t* mem, uint32_t offset){
+void load_entrada(FILE *entrada, uint8_t* mem){
     char token[16];
     uint32_t curr = 0; //endereço atual 
     while (fscanf(entrada, "%s", token) == 1) {
-        if (token[0] == '@') {
-            sscanf(token + 1, "%x", &curr); // leitura formatada
-        } else {
-            uint8_t value;
-            sscanf(token, "%hhx", &value); // hhx - hexadecimal de 8bits(1byte)
-            mem[curr - offset] = value;
+        if (token[0] == '@') sscanf(token + 1, "%x", &curr); // leitura formatada
+        else {
+            uint8_t val;
+            sscanf(token, "%hhx", &val); // hhx - hexadecimal de 8bits(1byte)
+            mem[curr - offset] = val;
             curr++;
         }
     }
@@ -51,7 +50,7 @@ void S_type(int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t funct3, FILE* saida, 
             break;
         }
         default:
-            printf("unknown instruction\n");
+            printf("unknown S instruction\n");
     }
 }
 
@@ -126,7 +125,7 @@ void I_type_imm(int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* said
                 break;
         }
         default:
-            printf("unknown instruction\n");
+            printf("unknown I-imm instruction\n");
 
     }
 }
@@ -174,7 +173,7 @@ void I_type_load(int16_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* sai
                 nomex[rd], endereco, (uint32_t)x[rd]);
         }
         default:
-            printf("unknown instruction\n");
+            printf("unknown I-load instruction\n");
     }
 
 }
@@ -319,7 +318,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
             break; 
         }
         default:
-            printf("unknown instruction\n"); 
+            printf("unknown R instruction\n"); 
     }
 }
 
@@ -372,6 +371,8 @@ void B_type(int32_t imm, uint8_t rs1, uint8_t rs2, uint8_t funct3, FILE* saida, 
                 x[rs1], x[rs2], flg, *pc + (flg ? imm : 4));
             break;
         }
+        default:
+            printf("unknown B instruction");
     }
     if(flg) *pc += imm - 4;
 }
@@ -395,7 +396,7 @@ int main (int argc, char *argv[]){
     }
 
     uint8_t* mem = (uint8_t*)(malloc(32 * 1024)); //32 Kib
-    load_hex(entrada, mem, 0x80000000);
+    load_entrada(entrada, mem);
     fclose(entrada);
 
     uint32_t pc = offset;
