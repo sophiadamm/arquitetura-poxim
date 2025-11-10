@@ -75,14 +75,14 @@ void I_type_imm(int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* said
             break;
         }
         case 0x2:/*Set Less Than Imm*/{
-            x[rd] = ((int32_t)x[rs1] < (int32_t)imm) ? 1 : 0;
+            x[rd] = (x[rs1] < imm)?1:0; // com sinal
             fprintf(saida,"slti   %s,%s,0x%03x   %s=(0x%08x<0x%08x)=%u\n",
                 nomex[rd], nomex[rs1], (imm & 0xFFF),
                 nomex[rd], prev_rs1, imm, x[rd]);
             break;
         }
         case 0x3:/*Set Less Than Imm (U)*/{
-            x[rd] = ((uint32_t)x[rs1] < (uint32_t)imm) ? 1 : 0;
+            x[rd] = ((uint32_t)x[rs1] < (uint32_t)imm)?1:0;
             fprintf(saida,"sltiu  %s,%s,0x%03x   %s=(0x%08x<0x%08x)=%u\n",
                 nomex[rd], nomex[rs1], (imm & 0xFFF),
                 nomex[rd], prev_rs1, imm, x[rd]);
@@ -92,7 +92,7 @@ void I_type_imm(int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* said
             x[rd] = x[rs1] ^ imm;
             fprintf(saida,"xori   %s,%s,0x%03x   %s=0x%08x^0x%08x=0x%08x\n",
                 nomex[rd], nomex[rs1], (uint32_t)(imm & 0xFFF),
-                nomex[rd], prev_rs1, (uint32_t)imm, x[rd]);
+                nomex[rd], prev_rs1, imm, x[rd]);
             break;
         }
         case 0x5: /*Shift Right Imm*/{
@@ -100,13 +100,13 @@ void I_type_imm(int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* said
                 x[rd] = (uint32_t)x[rs1] >> shamt;
                 fprintf(saida,"srli   %s,%s,%u      %s=0x%08x>>%u=0x%08x\n",
                 nomex[rd], nomex[rs1], shamt,
-                nomex[rd], (uint32_t)prev_rs1, shamt, (uint32_t)x[rd]);
+                nomex[rd], prev_rs1, shamt, x[rd]);
 
             }else{ //Shift Right Arith Imm
-                x[rd] = (int32_t)x[rs1] >> shamt;
+                x[rd] = x[rs1] >> shamt; // com sinal
                 fprintf(saida,"srai   %s,%s,%u      %s=0x%08x>>>%u=0x%08x\n",
                 nomex[rd], nomex[rs1], shamt,
-                nomex[rd], (uint32_t)prev_rs1, shamt, (uint32_t)x[rd]);
+                nomex[rd], prev_rs1, shamt, x[rd]);
             }
             break;
         }
@@ -166,8 +166,8 @@ void I_type_load(int16_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* sai
             break;
         }
         case 0x5: /*Load Half (U) (lhu) - extensão por 0*/{
-            uint16_t loaded_half = *(uint16_t*)&mem[indx];
-            x[rd] = (int32_t)loaded_half;
+            uint16_t hword = *(uint16_t*)&mem[indx];
+            x[rd] = (int32_t)hword;
             fprintf(saida, "lhu    %s,0x%03x(%s)  %s=mem[0x%08x]=0x%08x\n",
                 nomex[rd], imm & 0xFFF, nomex[rs1],
                 nomex[rd], endereco, (uint32_t)x[rd]);
@@ -195,10 +195,10 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
                 x[rd] = x[rs1] - x[rs2];
 
             }else{ //mul
+                x[rd] = (((int64_t)x[rs1] * (int64_t)x[rs2]) & 0xFFFFFFFF);
                 fprintf(saida,"mul    %s,%s,%s     %s=0x%08x*0x%08x=0x%08x\n", 
                     nomex[rd], nomex[rs1], nomex[rs2], nomex[rd], 
-                    x[rs1], x[rs2], x[rs1] * x[rs2]);    
-                x[rd] = x[rs1] * x[rs2];
+                    prev_rs1, prev_rs2, x[rd]);    
             }
             break;
         }
@@ -206,7 +206,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
             if(funct7 == 0x00){ //sll
                 uint32_t shamt = x[rs2] & 0b11111;
                 x[rd] = (uint32_t)x[rs1] << shamt;
-                fprintf(saida,"sll    %s,%s,%s     %s=0x%08x<<%05u=0x%08x\n", 
+                fprintf(saida,"sll    %s,%s,%s     %s=0x%08x<<%u=0x%08x\n", 
                     nomex[rd], nomex[rs1], nomex[rs2], nomex[rd], 
                     prev_rs1, shamt, x[rd]);
             }else{ //mulh
@@ -235,7 +235,7 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
         }
         case 0x3: /* Set Less Than (U) - sltu, */{
             if(funct7 == 0x00){ //sltu
-                x[rd] = ((uint32_t)x[rs1] < (uint32_t)x[rs2]) ? 1 : 0;
+                x[rd] = ((uint32_t)x[rs1] < (uint32_t)x[rs2])?1:0;
                 fprintf(saida,"sltu   %s,%s,%s     %s=(0x%08x<0x%08x)=%u\n",
                     nomex[rd], nomex[rs1], nomex[rs2],
                     nomex[rd], prev_rs1, prev_rs2, x[rd]);                
@@ -270,20 +270,20 @@ void R_type(uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_t funct3,uint8_t rd,
             uint32_t shamt = x[rs2] & 0b11111;
             if(funct7 == 0x00){ // Shift Right Logical (srl)
                 x[rd] = (uint32_t)x[rs1] >> shamt;
-                fprintf(saida,"srl    %s,%s,%s     %s=0x%08x>>%05u=0x%08x\n", 
+                fprintf(saida,"srl    %s,%s,%s     %s=0x%08x>>%u=0x%08x\n", 
                     nomex[rd], nomex[rs1], nomex[rs2],
                     nomex[rd], prev_rs1, shamt, x[rd]);
             }else if (funct7 == 0x20){ //Shift Right Arithmetic (sra) - considera o sinal
                 x[rd] = (int32_t)x[rs1] >> shamt;
-                fprintf(saida,"sra    %s,%s,%s     %s=0x%08x>>>%05u=0x%08x\n", 
+                fprintf(saida,"sra    %s,%s,%s     %s=0x%08x>>>%u=0x%08x\n", 
                     nomex[rd], nomex[rs1], nomex[rs2],nomex[rd], 
                     prev_rs1, shamt, x[rd]);
             }else{ //divu
-                if (x[rs2] == 0) x[rd] = 0xFFFFFFFF;
+                if (x[rs2] == 0) x[rd] = -1;
                 else x[rd] = (uint32_t)x[rs1] / (uint32_t)x[rs2];
                 fprintf(saida,"divu   %s,%s,%s     %s=0x%08x/0x%08x=0x%08x\n",
                        nomex[rd], nomex[rs1], nomex[rs2],
-                       nomex[rd], (uint32_t)prev_rs1, (uint32_t)prev_rs2, (uint32_t)x[rd]);
+                       nomex[rd], prev_rs1, prev_rs2, x[rd]);
             }
             break;
         }
