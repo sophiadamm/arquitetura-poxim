@@ -61,113 +61,47 @@ uint32_t read_csr(uint32_t addr) {
             return 0;
     }
 }
-
-uint32_t mpie = 0;     
-uint8_t in_trap = 0;  
-const uint32_t mpp = 0b011; // Nível de privilégio: sempre Machine 
+  
 const uint32_t CLEAR_MASK = (3U << 11) | (1U << 7) | (1U << 3);
 
-/*
-Captura do evento ---------> Nível de máquina (machine mode) -----------> Entrada da rotina (trap entry)
-    Desabilitando interrupções (mie = 0)
-    Atualizar mstatus
-    Obtendo pc do evento (mepc = pc)
-    Calculando pc = mtvec
-*/
+
 void trap_capture(uint32_t cause, uint32_t tval, uint32_t *pc_ptr, FILE *saida){
-    mpie = mie;
-    mie = 0;               
-    mepc = *pc_ptr;                  
-    in_trap = 1;
-
-    mstatus &= ~CLEAR_MASK;
-    uint32_t update = 0;
-    update |= (mpp & 0b11) << 11;
-    update |= (mpie & 0b1) << 7;
-    update |= (mie & 0b1) << 3;
-    mstatus |= update;
-
-    *pc_ptr = mtvec - 4;
-    trap_entry(cause, tval, pc_ptr, saida);
-}
-
-/*
-Entrada da rotina (trap entry)  -----------> Gerenciamento do evento (trap handler)
-    Salvando os registradores na pilha
-    Verificando a causa (mcause)
-*/
-void trap_entry(uint32_t cause, uint32_t tval, uint32_t *pc_ptr, FILE *saida){
-    
-    for (int i = 0; i < 32; ++i) saved_x[i] = x[i];
     mcause = cause;        
     mtval = tval;
-    trap_handler(pc_ptr, saida);
-    for (int i = 0; i < 32; ++i) x[i] = saved_x[i];
-}
+    mepc = *pc_ptr;
 
-/*
-Gerenciamento do evento (trap handler)
-    0 - exceção 
-    1 - interrupção
-    Restaurando os registradores da pilha
-    Retornando do evento (mret)
-*/
+    uint32_t mstatus_old = mstatus;
+    uint32_t mie_bit = (mstatus_old >> 3) & 1;
+    mstatus &= ~(1 << 3);       
+    mstatus &= ~(1 << 7);       
+    mstatus |= (mie_bit << 7);  
+    mstatus |= (0b11 << 11);    
 
-void trap_handler(uint32_t *pc_ptr, FILE *saida){
-
-    if ((mcause & 0x80000000U) != 0) {
-        // interrupção (n implementado)
-        fprintf(saida, "> interrupt:");
-
-    } else {
-        // exceção síncrona
-        fprintf(saida, ">exception:");
-        switch (mcause) {
-            case 1: {// illegal instruction
-                fprintf(saida, "instruction_fault         ");
-                break;
-            }
-            case 2: { // instruction access fault
-                fprintf(saida, "illegal_instruction       ");
-                break;
-            }
-            case 5: {// load access fault
-                fprintf(saida, "load_fault                ");
-                break;
-            }
-            case 7: { // store/amo access fault
-                fprintf(saida, "store_fault               ");
-                break;
-            }
-            case 11: {// ecall from M-mode (environment call)
-                run = 0;
-                break;
-            }
-            default: {
-                fprintf(saida, "unkown                    ");
-                break;
-            }
-        }
+    fprintf(saida, ">exception:");
+    switch (mcause) {
+        case 1: fprintf(saida, "instruction_fault         "); break;
+        case 2: fprintf(saida, "illegal_instruction       "); break;
+        case 5: fprintf(saida, "load_fault                "); break;
+        case 7: fprintf(saida, "store_fault               "); break;
+        default: fprintf(saida, "unkown                    "); break;
     }
-    fprintf(saida,",epc=0x%08x,tval=0x%08x", mepc, mtval);
-    trap_return(pc_ptr, saida);
+
+    if (mcause != 11) { 
+        fprintf(saida,",epc=0x%08x,tval=0x%08x\n", mepc, mtval);
+    }
+    *pc_ptr = (mtvec & 0xFFFFFFFC) - 4;    
 }
 
 void trap_return(uint32_t *pc_ptr, FILE *saida){
-    mie = mpie;
-    mstatus &= ~CLEAR_MASK;
-
-    uint32_t update = 0;
-    update |= (mpie & 0b1) << 3;  // MIE ← MPIE
-    update |= 1 << 7;             // MPIE ← 1 (regra do spec)
-
-    mstatus |= update;
-
+    uint32_t mpie_bit = (mstatus >> 7) & 1;
+    mstatus &= ~CLEAR_MASK; 
+    mstatus |= (mpie_bit << 3); 
+    mstatus |= (1 << 7);
+    mstatus |= (1 << 7);
     *pc_ptr = mepc - 4; 
-    in_trap = 0;
 }
 
-void CSR_Fluxo(uint32_t instrucao, uint32_t pc, uint8_t rd, uint8_t funct3, uint8_t rs1, int32_t immI, FILE* saida, uint32_t* pc_ptr, uint8_t* flg) {
+void CSR_Fluxo(uint32_t instrucao, uint32_t pc, uint8_t rd, uint8_t funct3, uint8_t rs1, int32_t immI, FILE* saida, uint32_t* pc_ptr) {
     
     uint32_t csr_addr = (uint32_t)immI & 0xFFF;
 
@@ -179,8 +113,9 @@ void CSR_Fluxo(uint32_t instrucao, uint32_t pc, uint8_t rd, uint8_t funct3, uint
                 trap_capture(11, 0, pc_ptr, saida);
                 break;
             }
-            case 0b001100000010: { //mnret
-                fprintf(saida, "mnret\n");
+            case 0b001100000010: { //mret
+                fprintf(saida, "mret                       pc=0x%08x\n", mepc);
+                trap_return(pc_ptr, saida);
                 break;
             }
             case 0b000000000001: { //ebreak
@@ -189,15 +124,16 @@ void CSR_Fluxo(uint32_t instrucao, uint32_t pc, uint8_t rd, uint8_t funct3, uint
                 break;
             }
             default: {
-                trap_capture(2, instrucao, &pc, saida);
+                trap_capture(2, instrucao, pc_ptr, saida);
                 break; 
             }
         }
     } else {
         // Instruções de CSR 
-        uint32_t prev_csr = map_csr(csr_addr);
+        uint32_t prev_csr = read_csr(csr_addr);
         uint32_t pos_csr = prev_csr;
-        char nomeCsr[10] =  nome_csr(csr_addr);
+        char nomeCsr[10];
+        strcpy(nomeCsr, nome_csr(csr_addr));
         uint32_t ext_rs1 = (uint32_t)rs1;
         switch (funct3) {
             case 0b001: // csrrw: 
@@ -216,7 +152,7 @@ void CSR_Fluxo(uint32_t instrucao, uint32_t pc, uint8_t rd, uint8_t funct3, uint
                 break;
             case 0b011: // csrrc: 
                 pos_csr = prev_csr & ~x[rs1];
-                fprintf(saida, "csrrc  %s,%s,%s     %s=%s=0x%08x,%s&~=%s=0x???????&~0x%08x=0x%08x\n",
+                fprintf(saida, "csrrc  %s,%s,%s     %s=%s=0x%08x,%s&~=%s=0x%08x&~0x%08x=0x%08x\n",
                     nomex[rd], nomeCsr, nomex[rs1],
                     nomex[rd], nomeCsr, prev_csr, 
                     nomeCsr, nomex[rs1], prev_csr, x[rs1], pos_csr);
@@ -243,7 +179,7 @@ void CSR_Fluxo(uint32_t instrucao, uint32_t pc, uint8_t rd, uint8_t funct3, uint
                     nomeCsr, ext_rs1, prev_csr, ext_rs1, pos_csr);
                 break;
             default:{
-                trap_capture(2, instrucao, &pc, saida);
+                trap_capture(2, instrucao, pc_ptr, saida);
                 return;
             }
         }
@@ -675,6 +611,11 @@ int main (int argc, char *argv[]){
     uint32_t pc = offset;
 
     while(run){
+        if ((pc % 4 != 0) || (pc < offset) || (pc >= offset + 32*1024)) {
+            trap_capture(1, pc, &pc, saida);
+            pc += 4; 
+            continue; 
+        }
         uint32_t instrucao = ((uint32_t*)mem)[(pc - offset) >> 2];
         uint8_t opcode = instrucao & 0b1111111;              // bits 6:0
         uint8_t rd     = (instrucao >> 7) & 0b11111;         // bits 11:7
@@ -753,7 +694,7 @@ int main (int argc, char *argv[]){
                 break;
             }
             case 0b1110011: { // instruções csr, mnret, ecall, ebreak;
-                CSR_Enviroment(instrucao, pc, rd, funct3, rs1, immI, saida, &pc);
+                CSR_Fluxo(instrucao, pc, rd, funct3, rs1, immI, saida, &pc);
                 break;
             }
             default:{
