@@ -76,19 +76,51 @@ void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
     mstatus |= (mie_bit << 7);  
     mstatus |= (0b11 << 11);    
 
-    fprintf(saida, ">exception:");
-    switch (mcause) {
-        case 1: fprintf(saida, "instruction_fault         "); break;
-        case 2: fprintf(saida, "illegal_instruction       "); break;
-        case 5: fprintf(saida, "load_fault                "); break;
-        case 7: fprintf(saida, "store_fault               "); break;
-        case 11: fprintf(saida, "environment_call         "); break;
-        default: fprintf(saida, "unkown                   "); break;
+     if ((mcause & 0x80000000U) != 0) {
+        uint32_t code = mcause & 0x7FFFFFFF;
+
+        fprintf(saida, ">interrupt:");
+        switch (code) {
+            case 3:  fprintf(saida, "software        "); break;
+            case 7:  fprintf(saida, "timer           "); break;
+            case 11: fprintf(saida, "external        "); break;
+            default: fprintf(saida, "unknown         "); break;
+        }
+    }else{
+        fprintf(saida, ">exception:");
+        switch (mcause) {
+            case 1: fprintf(saida, "instruction_fault         "); break;
+            case 2: fprintf(saida, "illegal_instruction       "); break;
+            case 5: fprintf(saida, "load_fault                "); break;
+            case 7: fprintf(saida, "store_fault               "); break;
+            case 11: fprintf(saida, "environment_call         "); break;
+            default: fprintf(saida, "unkown                   "); break;
+        }
     }
-
     fprintf(saida,"cause=0x%08x,epc=0x%08x,tval=0x%08x\n",mcause, mepc, mtval);
-
     pc = (mtvec & 0xFFFFFFFC) - 4;    
+}
+
+int check_int(uint32_t *mask) {
+
+    if ((mstatus & (1 << 3)) == 0) return 0;
+
+    uint32_t sts = mip & mie;
+    if (sts == 0) return 0; // n tem nem pendente, nem habilitada
+
+    if (sts & (1 << 3)) {
+        *mask = 0x80000000 | 3;   // software
+        return 1;
+    }
+    if (sts & (1 << 7)) {
+        *mask = 0x80000000 | 7;   // timer
+        return 1;
+    }
+    if (sts & (1 << 11)) {
+        *mask = 0x80000000 | 11;  // external
+        return 1;
+    }
+    return 0;
 }
 
 void trap_return(){
@@ -620,6 +652,13 @@ int main (int argc, char *argv[]){
             trap_capture(1, pc, saida);
             pc += 4; 
             continue; 
+        }
+
+        uint32_t icause;
+        if (detect_interrupt(&icause)) {
+            trap_capture(icause, 0, saida);
+            pc += 4;
+            continue;
         }
 
         uint32_t instrucao = ((uint32_t*)mem)[(pc - offset) >> 2];
