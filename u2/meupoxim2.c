@@ -4,14 +4,40 @@
 #include <inttypes.h>
 #include <string.h>
 
+
+#define RAM_INF 0x80000000
+#define RAM_SUP 0x80008000
+
+#define CLINT_INF  0x02000000
+#define CLINT_SUP  0x020c0000 
+
+#define PLIC_INF  0x0c000000
+#define PLIC_SUP  0x0c200004
+
+#define UART_INF   0x10000000 
+#define UART_SUP   0x10000005  
+
 int32_t x[32] = {0};
 const char* nomex[32] = { "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", 
                             "a3", "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
-const uint32_t offset = 0x80000000;
+const uint32_t offset[4] = {
+    RAM_INF,
+    CLINT_INF - (RAM_SUP - RAM_INF + 1),
+    PLIC_INF - (RAM_SUP - RAM_INF + CLINT_SUP - CLINT_INF + 2),
+    UART_INF - (RAM_SUP - RAM_INF + CLINT_SUP - CLINT_INF + PLIC_SUP - PLIC_INF + 3)
+};
+
 uint8_t run = 1;
 uint32_t pc = 0;
 
+size_t tam_end =
+    (RAM_SUP   - RAM_INF   + 1) +
+    (CLINT_SUP - CLINT_INF + 1) +
+    (PLIC_SUP  - PLIC_INF  + 1) +
+    (UART_SUP  - UART_INF  + 1);
+
 /*POXIM V2*/
+
 //Registradores CSR
 uint32_t mstatus = 0; // Registrador de status
 uint32_t mie = 0;     // Habilitação de Interupção
@@ -104,28 +130,6 @@ void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
     }
     fprintf(saida,"cause=0x%08x,epc=0x%08x,tval=0x%08x\n",mcause, mepc, mtval);
     pc = (mtvec & 0xFFFFFFFC) - 4;    
-}
-
-int check_int(uint32_t *mask) {
-
-    if ((mstatus & (1 << 3)) == 0) return 0;
-
-    uint32_t sts = mip & mie;
-    if (sts == 0) return 0; // n tem nem pendente, nem habilitada
-
-    if (sts & (1 << 3)) {
-        *mask = 0x80000000 | 3;   // software
-        return 1;
-    }
-    if (sts & (1 << 7)) {
-        *mask = 0x80000000 | 7;   // timer
-        return 1;
-    }
-    if (sts & (1 << 11)) {
-        *mask = 0x80000000 | 11;  // external
-        return 1;
-    }
-    return 0;
 }
 
 /*Ao retornar, o processo é revertido: xIE recebe xPIE*/
@@ -232,8 +236,37 @@ void CSR_Fluxo(uint32_t instrucao, uint8_t rd, uint8_t funct3, uint8_t rs1, int3
     }
 }
 
-/* POXIM V1 */
+int check_int(uint32_t *mask) {
 
+    if ((mstatus & (1 << 3)) == 0) return 0;
+
+    uint32_t sts = mip & mie;
+    if (sts == 0) return 0; // n tem nem pendente, nem habilitada
+
+    if (sts & (1 << 3)) {
+        *mask = 0x80000000 | 3;   // software
+        return 1;
+    }
+    if (sts & (1 << 7)) {
+        *mask = 0x80000000 | 7;   // timer
+        return 1;
+    }
+    if (sts & (1 << 11)) {
+        *mask = 0x80000000 | 11;  // external
+        return 1;
+    }
+    return 0;
+}
+
+int addrs_range(uint32_t addr){
+    if(addr >= RAM_INF && addr <= RAM_SUP) return 0;
+    if(addr >= CLINT_INF && addr <= CLINT_SUP) return 1;
+    if(addr >= PLIC_INF && addr <= PLIC_SUP) return 2;
+    if(addr >= UART_INF && addr <= UART_SUP) return 3;
+    return -1;
+}
+
+/* POXIM V1 */
 void load_entrada(FILE *entrada, uint8_t* mem){
     char token[16];
     uint32_t curr = 0; //endereço atual 
@@ -242,7 +275,7 @@ void load_entrada(FILE *entrada, uint8_t* mem){
         else {
             uint8_t val;
             sscanf(token, "%hhx", &val); // hhx - hexadecimal de 8bits(1byte)
-            mem[curr - offset] = val;
+            mem[curr - RAM_INF] = val;
             curr++;
         }
     }
@@ -250,13 +283,15 @@ void load_entrada(FILE *entrada, uint8_t* mem){
 
 void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t funct3, FILE* saida, uint8_t* mem){ //0100011
     uint32_t endereco = x[rs1] + (int32_t)imm; 
-    uint32_t indx = endereco - offset;
     int32_t dado = x[rs2];
 
-    if (endereco < offset || indx >= 32*1024) {
+
+    int cd = addrs_range(endereco);
+    if(cd < 0){
         trap_capture( 7, endereco, saida);
         return;
     }
+    uint32_t indx = endereco - offset[cd];
 
     switch (funct3){
         case 0x0: /*Store Byte*/{
@@ -366,12 +401,12 @@ void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, ui
 void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida, uint8_t* mem) { //0000011
 
     uint32_t endereco = x[rs1] + (int32_t)imm; 
-    uint32_t indx = endereco - offset;
-
-    if (endereco < offset || indx >= 32*1024) {
-        trap_capture(5, endereco, saida);
+    int cd = addrs_range(endereco);
+    if(cd < 0){
+        trap_capture( 7, endereco, saida);
         return;
     }
+    uint32_t indx = endereco - offset[cd];
 
     switch (funct3){
         case 0x0: /*Load Byte (lb) - extensão de sinal*/ {
@@ -649,14 +684,14 @@ int main (int argc, char *argv[]){
         return 1;
     }
 
-    uint8_t* mem = (uint8_t*)(malloc(32 * 1024)); //32 Kib
+    uint8_t* mem = (uint8_t*)(malloc(tam_end)); 
     load_entrada(entrada, mem);
     fclose(entrada);
 
-    pc = offset;
+    pc = RAM_INF;
 
     while(run){
-        if ((pc % 4 != 0) || (pc < offset) || (pc >= offset + 32*1024)) {
+        if ((pc % 4 != 0) || addrs_range(pc) != 0) {
             trap_capture(1, pc, saida);
             pc += 4; 
             continue; 
@@ -669,7 +704,7 @@ int main (int argc, char *argv[]){
             continue;
         }
 
-        uint32_t instrucao = ((uint32_t*)mem)[(pc - offset) >> 2];
+        uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
         uint8_t opcode = instrucao & 0b1111111;              // bits 6:0
         uint8_t rd     = (instrucao >> 7) & 0b11111;         // bits 11:7
         uint8_t funct3 = (instrucao >> 12) & 0b111;          // bits 14:12
