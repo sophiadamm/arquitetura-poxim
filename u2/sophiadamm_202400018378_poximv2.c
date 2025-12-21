@@ -62,7 +62,13 @@ uint32_t read_csr(uint32_t addr) {
     }
 }
   
-const uint32_t CLEAR_MASK = ((1 << 3) | (1 << 7) | (3 << 11));
+const uint32_t CLEAR_MASK = ((1 << 3) | (1 << 7));
+const uint32_t mode = ((1 << 11) | (1 << 12));
+
+/*Fluxo de Trap: Quando ocorre um trap, o hardware automaticamente salva o estado: 
+xPIE recebe xIE, 
+xIE é zerado e 
+xPP recebe o modo de privilégio anterior. */
 
 void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
     mcause = cause;        
@@ -71,10 +77,9 @@ void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
 
     uint32_t mstatus_old = mstatus;
     uint32_t mie_bit = (mstatus_old >> 3) & 1;
-    mstatus &= ~(1 << 3);       
-    mstatus &= ~(1 << 7);       
-    mstatus |= (mie_bit << 7);  
-    mstatus |= (0b11 << 11);    
+    mstatus &= ~CLEAR_MASK;   
+    mstatus |= (mie_bit << 7); // MPIE recebe MIE
+    mstatus |= mode;
 
      if ((mcause & 0x80000000U) != 0) {
         uint32_t code = mcause & 0x7FFFFFFF;
@@ -123,11 +128,14 @@ int check_int(uint32_t *mask) {
     return 0;
 }
 
+/*Ao retornar, o processo é revertido: xIE recebe xPIE*/
 void trap_return(){
     uint32_t mpie = (mstatus >> 7) & 1;
     mstatus &= ~CLEAR_MASK;
     mstatus |= (mpie << 3);
     mstatus |= (1 << 7);
+    mstatus |= mode;
+
     pc = mepc - 4;
 }
 
@@ -655,7 +663,7 @@ int main (int argc, char *argv[]){
         }
 
         uint32_t icause;
-        if (detect_interrupt(&icause)) {
+        if (check_int(&icause)) {
             trap_capture(icause, 0, saida);
             pc += 4;
             continue;

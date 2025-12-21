@@ -663,7 +663,7 @@ int main (int argc, char *argv[]){
         }
 
         uint32_t icause;
-        if (detect_interrupt(&icause)) {
+        if (check_int(&icause)) {
             trap_capture(icause, 0, saida);
             pc += 4;
             continue;
