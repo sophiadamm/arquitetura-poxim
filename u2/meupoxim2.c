@@ -403,7 +403,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
     uint32_t endereco = x[rs1] + (int32_t)imm; 
     int cd = addrs_range(endereco);
     if(cd < 0){
-        trap_capture( 7, endereco, saida);
+        trap_capture(5, endereco, saida);
         return;
     }
     uint32_t indx = endereco - offset[cd];
@@ -444,6 +444,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             fprintf(saida, "0x%08x:lhu    %s,0x%03x(%s)  %s=mem[0x%08x]=0x%08x\n",
                 pc, nomex[rd], imm & 0xFFF, nomex[rs1],
                 nomex[rd], endereco, (uint32_t)x[rd]);
+            break;
         }
         default:
             trap_capture(2, instrucao, saida);
