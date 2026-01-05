@@ -92,7 +92,7 @@ uint32_t read_csr(uint32_t addr) {
             return 0;
     }
 }
-  
+
 const uint32_t CLEAR_MASK = ((1 << 3) | (1 << 7));
 const uint32_t mode = ((1 << 11) | (1 << 12));
 
@@ -250,7 +250,11 @@ int check_int(uint32_t *mask) {
 
     uint32_t sts = mip & mie;
     if (sts == 0) return 0; // n tem nem pendente, nem habilitada
-
+    
+    if (sts & (1 << 11)) {
+        *mask = 0x80000000 | 11;  // external
+        return 1;
+    }
     if (sts & (1 << 3)) {
         *mask = 0x80000000 | 3;   // software
         return 1;
@@ -259,10 +263,7 @@ int check_int(uint32_t *mask) {
         *mask = 0x80000000 | 7;   // timer
         return 1;
     }
-    if (sts & (1 << 11)) {
-        *mask = 0x80000000 | 11;  // external
-        return 1;
-    }
+
     return 0;
 }
 
@@ -326,10 +327,7 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
 
 
     int cd = addrs_range(endereco);
-    if(cd < 0){
-        trap_capture( 7, endereco, saida);
-        return;
-    }
+
     uint32_t indx = endereco - offset[cd];
 
     switch (funct3){
@@ -357,6 +355,16 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         default:
             trap_capture(2, instrucao, saida);
     }
+
+
+    if(endereco == 0x02000000){
+        if (dado != 0) {
+            mip |= (1 << 3);  // Ativa interrupção de software
+        } else {
+            mip &= ~(1 << 3); // Limpa interrupção de software
+        }
+    }
+
 }
 
 void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida, uint8_t* mem){ //0010011
