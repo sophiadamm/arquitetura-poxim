@@ -327,14 +327,6 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
 
 
     int cd = addrs_range(endereco);
-    if(cd < 0){
-        trap_capture( 7, endereco, saida);
-        return;
-    }
-
-    if(endereco == 0x02000000){
-        mip |= (1 << 3);  
-    }
 
     uint32_t indx = endereco - offset[cd];
 
@@ -363,6 +355,16 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         default:
             trap_capture(2, instrucao, saida);
     }
+
+
+    if(endereco == 0x02000000){
+        if (dado != 0) {
+            mip |= (1 << 3);  // Ativa interrupção de software
+        } else {
+            mip &= ~(1 << 3); // Limpa interrupção de software
+        }
+    }
+
 }
 
 void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida, uint8_t* mem){ //0010011
