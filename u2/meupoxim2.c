@@ -146,7 +146,7 @@ void trap_return(){
     mstatus &= ~CLEAR_MASK;
     mstatus |= (mpie << 3);
     mstatus |= (1 << 7);
-    mstatus |= mode;
+    mstatus &= ~mode; 
 
     pc = mepc - 4;
 }
