@@ -92,7 +92,7 @@ uint32_t read_csr(uint32_t addr) {
             return 0;
     }
 }
-  
+
 const uint32_t CLEAR_MASK = ((1 << 3) | (1 << 7));
 const uint32_t mode = ((1 << 11) | (1 << 12));
 
@@ -129,7 +129,16 @@ void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
         }
     }
     fprintf(saida,"cause=0x%08x,epc=0x%08x,tval=0x%08x\n",mcause, mepc, mtval);
-    pc = (mtvec & 0xFFFFFFFC) - 4;    
+
+
+    uint32_t base = mtvec & 0xFFFFFFFC;
+    uint32_t mtvec_mode = mtvec & 0x00000003;
+
+    if (mtvec_mode == 1 && (mcause & 0x80000000U)) { 
+        // MODO VETORIZADO: Ativado se mode for 1 E for uma interrupção (bit 31 setado)
+        uint32_t code = mcause & 0x7FFFFFFF;
+        pc = (base + (code * 4)) - 4; 
+    } else pc = base - 4;
 }
 
 void trap_return(){
@@ -137,7 +146,7 @@ void trap_return(){
     mstatus &= ~CLEAR_MASK;
     mstatus |= (mpie << 3);
     mstatus |= (1 << 7);
-    mstatus |= mode;
+    mstatus &= ~mode; 
 
     pc = mepc - 4;
 }
@@ -241,7 +250,11 @@ int check_int(uint32_t *mask) {
 
     uint32_t sts = mip & mie;
     if (sts == 0) return 0; // n tem nem pendente, nem habilitada
-
+    
+    if (sts & (1 << 11)) {
+        *mask = 0x80000000 | 11;  // external
+        return 1;
+    }
     if (sts & (1 << 3)) {
         *mask = 0x80000000 | 3;   // software
         return 1;
@@ -250,10 +263,7 @@ int check_int(uint32_t *mask) {
         *mask = 0x80000000 | 7;   // timer
         return 1;
     }
-    if (sts & (1 << 11)) {
-        *mask = 0x80000000 | 11;  // external
-        return 1;
-    }
+
     return 0;
 }
 
@@ -321,6 +331,11 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         trap_capture( 7, endereco, saida);
         return;
     }
+
+    if(endereco == 0x02000000){
+        mip |= (1 << 3);  
+    }
+
     uint32_t indx = endereco - offset[cd];
 
     switch (funct3){
