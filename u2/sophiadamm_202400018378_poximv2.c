@@ -17,6 +17,11 @@
 #define UART_INF   0x10000000 
 #define UART_SUP   0x10000005  
 
+#define MTIME_HIGH   0x0200BFFC 
+#define MTIME_LOW   0x0200BFF8  
+#define MTIMECMP_HIGH   0x02004004  
+#define MTIMECMP_LOW   0x02004000  
+
 int32_t x[32] = {0};
 const char* nomex[32] = { "zero", "ra", "sp", "gp", "tp", "t0", "t1", "t2", "s0", "s1", "a0", "a1", "a2", 
                             "a3", "a4", "a5", "a6", "a7", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11", "t3", "t4", "t5", "t6"};
@@ -91,11 +96,6 @@ uint32_t read_csr(uint32_t addr) {
 const uint32_t CLEAR_MASK = ((1 << 3) | (1 << 7));
 const uint32_t mode = ((1 << 11) | (1 << 12));
 
-/*Fluxo de Trap: Quando ocorre um trap, o hardware automaticamente salva o estado: 
-xPIE recebe xIE, 
-xIE é zerado e 
-xPP recebe o modo de privilégio anterior. */
-
 void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
     mcause = cause;        
     mtval = tval;
@@ -132,7 +132,6 @@ void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
     pc = (mtvec & 0xFFFFFFFC) - 4;    
 }
 
-/*Ao retornar, o processo é revertido: xIE recebe xPIE*/
 void trap_return(){
     uint32_t mpie = (mstatus >> 7) & 1;
     mstatus &= ~CLEAR_MASK;
@@ -266,6 +265,31 @@ int addrs_range(uint32_t addr){
     return -1;
 }
 
+void timer(uint8_t* mem){
+    uint32_t addr_mtime_low    = MTIME_LOW - offset[1];
+    uint32_t addr_mtime_high   = MTIME_HIGH - offset[1];
+    uint32_t addr_mtimecmp_low = MTIMECMP_LOW - offset[1];
+    uint32_t addr_mtimecmp_high= MTIMECMP_HIGH - offset[1];
+
+    uint32_t mtime_l = *(uint32_t*)&mem[addr_mtime_low];
+    uint32_t mtime_h = *(uint32_t*)&mem[addr_mtime_high];
+    uint64_t mtime   = ((uint64_t)mtime_h << 32) | mtime_l;
+
+    uint32_t mtimecmp_l = *(uint32_t*)&mem[addr_mtimecmp_low];
+    uint32_t mtimecmp_h = *(uint32_t*)&mem[addr_mtimecmp_high];
+    uint64_t mtimecmp   = ((uint64_t)mtimecmp_h << 32) | mtimecmp_l;
+
+    mtime++;
+
+    *(uint32_t*)&mem[addr_mtime_low]  = (uint32_t)(mtime & 0xFFFFFFFF);
+    *(uint32_t*)&mem[addr_mtime_high] = (uint32_t)(mtime >> 32);
+
+    if(mtime >= mtimecmp){
+        mip |= (1 << 7);  
+    } else {
+        mip &= ~(1 << 7); 
+    }
+}
 /* POXIM V1 */
 void load_entrada(FILE *entrada, uint8_t* mem){
     char token[16];
@@ -274,8 +298,14 @@ void load_entrada(FILE *entrada, uint8_t* mem){
         if (token[0] == '@') sscanf(token + 1, "%x", &curr); // leitura formatada
         else {
             uint8_t val;
-            sscanf(token, "%hhx", &val); // hhx - hexadecimal de 8bits(1byte)
-            mem[curr - RAM_INF] = val;
+            sscanf(token, "%hhx", &val);
+            int cd = addrs_range(curr);
+            if (cd < 0) {
+                fprintf(stderr, "warning: endereço %08x fora do espaço mapeado\n", curr);
+            } else {
+                uint32_t idx = curr - offset[cd]; 
+                mem[idx] = val;
+            }
             curr++;
         }
     }
@@ -693,7 +723,7 @@ int main (int argc, char *argv[]){
 
     while(run){
         if ((pc % 4 != 0) || addrs_range(pc) != 0) {
-            trap_capture(1, pc, saida);
+            trap_capture(1, 0, saida);
             pc += 4; 
             continue; 
         }
@@ -791,6 +821,7 @@ int main (int argc, char *argv[]){
         }
         x[0] = 0;
         pc += 4;
+        timer(mem);
     }
     fclose(saida);
 }

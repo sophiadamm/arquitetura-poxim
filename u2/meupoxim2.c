@@ -129,7 +129,16 @@ void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
         }
     }
     fprintf(saida,"cause=0x%08x,epc=0x%08x,tval=0x%08x\n",mcause, mepc, mtval);
-    pc = (mtvec & 0xFFFFFFFC) - 4;    
+
+
+    uint32_t base = mtvec & 0xFFFFFFFC;
+    uint32_t mtvec_mode = mtvec & 0x00000003;
+
+    if (mtvec_mode == 1 && (mcause & 0x80000000U)) { 
+        // MODO VETORIZADO: Ativado se mode for 1 E for uma interrupção (bit 31 setado)
+        uint32_t code = mcause & 0x7FFFFFFF;
+        pc = (base + (code * 4)) - 4; 
+    } else pc = base - 4;
 }
 
 void trap_return(){
@@ -298,8 +307,14 @@ void load_entrada(FILE *entrada, uint8_t* mem){
         if (token[0] == '@') sscanf(token + 1, "%x", &curr); // leitura formatada
         else {
             uint8_t val;
-            sscanf(token, "%hhx", &val); // hhx - hexadecimal de 8bits(1byte)
-            mem[curr - RAM_INF] = val;
+            sscanf(token, "%hhx", &val);
+            int cd = addrs_range(curr);
+            if (cd < 0) {
+                fprintf(stderr, "warning: endereço %08x fora do espaço mapeado\n", curr);
+            } else {
+                uint32_t idx = curr - offset[cd]; 
+                mem[idx] = val;
+            }
             curr++;
         }
     }

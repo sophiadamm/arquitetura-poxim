@@ -1,6 +1,6 @@
 #include <bits/stdc++.h>
 using namespace std;
-
+//g++ -std=c++17 -O2 -o compare_tokens compare_tokens.cpp"
 static void print_context(const vector<string>& v, size_t idx, size_t context = 3) {
     size_t start = (idx < context) ? 0 : idx - context;
     size_t end = min(v.size(), idx + context + 1);
@@ -39,18 +39,24 @@ int main(int argc, char** argv) {
     size_t n_act = act_tokens.size();
     size_t n_min = min(n_exp, n_act);
 
+    int cnt = 0;
+
     for (size_t i = 0; i < n_min; ++i) {
         if (exp_tokens[i] != act_tokens[i]) {
-            cout << "First difference at token " << (i+1) << ":\n";
-            cout << "  expected: \"" << exp_tokens[i] << "\"\n";
-            cout << "  actual:   \"" << act_tokens[i]  << "\"\n\n";
-            cout << "Context in expected file:\n";
-            print_context(exp_tokens, i);
-            cout << "Context in actual file:\n";
-            print_context(act_tokens, i);
-            cout << "\nSummary: expected tokens = " << n_exp << ", actual tokens = " << n_act << '\n';
-            return 1;
+
+            if(cnt < 50){
+                cout << "Difference at token " << (i+1) << ":\n";
+                cout << "  expected: \"" << exp_tokens[i] << "\"\n";
+                cout << "  actual:   \"" << act_tokens[i]  << "\"\n\n";
+                cout << "Context in expected file:\n";
+                print_context(exp_tokens, i);
+                cout << "Context in actual file:\n";
+                print_context(act_tokens, i);
+                cout << "\n";
+            }
+            cnt++;
         }
+
     }
 
     if (n_exp != n_act) {
@@ -68,9 +74,9 @@ int main(int argc, char** argv) {
             for (size_t i = 0; i < show; ++i)
                 cout << "  [" << (n_exp + 1 + i) << "] \"" << act_tokens[n_exp + i] << "\"\n";
         }
-        return 1;
     }
 
-    cout << "Files are identical token-by-token (" << n_exp << " tokens).\n";
+    cout << "Found " << cnt << " Diferrences within " << n_exp << " tokens \n";
+    cout << "Nota simulada : " << 4 - 4*(cnt/n_exp) << "\n";
     return 0;
 }
