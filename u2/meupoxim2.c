@@ -119,7 +119,11 @@ void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
         switch (code) {
             case 3:  fprintf(saida, "software        "); break;
             case 7:  fprintf(saida, "timer           "); break;
-            case 11: fprintf(saida, "external        "); break;
+            case 11: {
+                fprintf(saida, "external        "); 
+                mip &= ~(1<<11);
+                break;
+            }
             default: fprintf(saida, "unknown         "); break;
         }
     }else{
@@ -251,19 +255,9 @@ void CSR_Fluxo(uint32_t instrucao, uint8_t rd, uint8_t funct3, uint8_t rs1, int3
 
 int contador = 0;
 
-int check_int(uint32_t *mask, uint8_t ISR, uint8_t IER) {
+int check_int(uint32_t *mask) {
 
     if ((mstatus & (1 << 3)) == 0) return 0;
-
-    printf("%d - checagem: ISR - %08x | IER - %08x\n", ++contador, ISR, IER);
-
-    if((ISR & 0b1111) == (1 << 2) && (IER & 1)){ // Received Data Ready
-        mip |= (1 << 11);
-    }else if((ISR & 0b1111) == (1 << 1) && (IER & 2)){ // Transmitter Holding Register Empty
-        mip |= (1 << 11);
-    }else{
-        mip &= ~(1 << 11);
-    }
     
     uint32_t sts = mip & mie;
     if (sts == 0) return 0; // n tem nem pendente, nem habilitada
@@ -383,24 +377,17 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         } else {
             mip &= ~(1 << 3); // Limpa interrupção de software
         }
-    }else if(endereco == 0x10000000){
-        if(dado != 0){ // Received Data Ready
-            mem[ADDRS_ISR - offset[3]] &= ~RST_ISR; 
-            mem[ADDRS_ISR - offset[3]] |= (1 << 2); 
-
-            mem[ADDRS_LSR - offset[3]] |= 1; // Data Ready Bit
-            mem[ADDRS_LSR- offset[3]] &= ~RST_LSR; // Realizando uma transmissão
-
-        }else{ // Transmitter Holding Register Empty
-            mem[ADDRS_ISR- offset[3]] &= ~RST_ISR;
-            mem[ADDRS_ISR- offset[3]] |= (1 << 1); 
-
-            mem[ADDRS_LSR- offset[3]] &= ~RST_ISR; // Data Ready Bit 
-            mem[ADDRS_LSR- offset[3]] = RST_LSR; // Sem dados para transmitir
+    }else if (endereco == 0x10000000) {
+        mem[ADDRS_LSR - offset[3]] |= RST_LSR; 
+        uint8_t ier = mem[0x10000001 - offset[3]];
+        
+        if (ier & 0x02) { 
+            mem[ADDRS_ISR - offset[3]] = 0x02; 
+            mip |= (1 << 11); 
         }
     }
-
 }
+
 
 void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida, uint8_t* mem){ //0010011
     uint8_t funct7 = (imm >> 5) & 0b1111111;
@@ -790,7 +777,7 @@ int main (int argc, char *argv[]){
         uint32_t icause;
         uint8_t ISR = mem[ADDRS_ISR - offset[3]];
         uint8_t LSR = mem[0x10000001 - offset[3]];
-        if (check_int(&icause, ISR, LSR)) {
+        if (check_int(&icause)) {
             trap_capture(icause, 0, saida);
             pc += 4;
             continue;
