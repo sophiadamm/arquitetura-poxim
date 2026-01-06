@@ -17,6 +17,11 @@
 #define UART_INF   0x10000000 
 #define UART_SUP   0x10000005  
 
+#define RST_ISR  0b00000001
+#define ADDRS_ISR  0x10000002
+#define RST_LSR  0b01100000
+#define ADDRS_LSR  0x10000005
+
 #define MTIME_HIGH   0x0200BFFC 
 #define MTIME_LOW   0x0200BFF8  
 #define MTIMECMP_HIGH   0x02004004  
@@ -244,10 +249,18 @@ void CSR_Fluxo(uint32_t instrucao, uint8_t rd, uint8_t funct3, uint8_t rs1, int3
     }
 }
 
-int check_int(uint32_t *mask) {
+int check_int(uint32_t *mask, uint8_t ISR, uint8_t IER) {
 
     if ((mstatus & (1 << 3)) == 0) return 0;
 
+    if((ISR & 0b1111) == (1 << 2) && (IER & 1)){ // Received Data Ready
+        mip |= (1 << 11);
+    }else if((ISR & 0b1111) == (1 << 1) && (IER & 2)){ // Transmitter Holding Register Empty
+        mip |= (1 << 11);
+    }else{
+        mip &= ~(1 << 11);
+    }
+    
     uint32_t sts = mip & mie;
     if (sts == 0) return 0; // n tem nem pendente, nem habilitada
     
@@ -362,6 +375,21 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
             mip |= (1 << 3);  // Ativa interrupção de software
         } else {
             mip &= ~(1 << 3); // Limpa interrupção de software
+        }
+    }else if(endereco == 0x10000000){
+        if(dado != 0){ // Received Data Ready
+            mem[ADDRS_ISR] &= ~RST_ISR; 
+            mem[ADDRS_ISR] |= (1 << 2); 
+
+            mem[ADDRS_LSR] |= 1; // Data Ready Bit
+            mem[ADDRS_LSR] &= ~RST_LSR; // Realizando uma transmissão
+
+        }else{ // Transmitter Holding Register Empty
+            mem[ADDRS_ISR] &= ~RST_ISR;
+            mem[ADDRS_ISR] |= (1 << 1); 
+
+            mem[ADDRS_LSR] &= ~RST_ISR; // Data Ready Bit 
+            mem[ADDRS_LSR] = RST_LSR; // Sem dados para transmitir
         }
     }
 
@@ -737,6 +765,8 @@ int main (int argc, char *argv[]){
     fclose(entrada);
 
     pc = RAM_INF;
+    mem[ADDRS_ISR] = RST_ISR;
+    mem[ADDRS_LSR] = RST_LSR;
 
     while(run){
         if ((pc % 4 != 0) || addrs_range(pc) != 0) {

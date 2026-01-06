@@ -300,6 +300,7 @@ void timer(uint8_t* mem){
         mip &= ~(1 << 7); 
     }
 }
+
 /* POXIM V1 */
 void load_entrada(FILE *entrada, uint8_t* mem){
     char token[16];
@@ -364,7 +365,6 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
             mip &= ~(1 << 3); // Limpa interrupção de software
         }
     }
-
 }
 
 void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida, uint8_t* mem){ //0010011
@@ -737,6 +737,7 @@ int main (int argc, char *argv[]){
     fclose(entrada);
 
     pc = RAM_INF;
+    mem[0x10000002] = 0b00000001; // sem pendencia - interrupcao uart;
 
     while(run){
         if ((pc % 4 != 0) || addrs_range(pc) != 0) {
