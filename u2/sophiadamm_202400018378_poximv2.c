@@ -17,6 +17,11 @@
 #define UART_INF   0x10000000 
 #define UART_SUP   0x10000005  
 
+#define RST_ISR  1
+#define ADDRS_ISR  0x10000002
+#define RST_LSR  60
+#define ADDRS_LSR  0x10000005
+
 #define MTIME_HIGH   0x0200BFFC 
 #define MTIME_LOW   0x0200BFF8  
 #define MTIMECMP_HIGH   0x02004004  
@@ -114,7 +119,11 @@ void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
         switch (code) {
             case 3:  fprintf(saida, "software        "); break;
             case 7:  fprintf(saida, "timer           "); break;
-            case 11: fprintf(saida, "external        "); break;
+            case 11: {
+                fprintf(saida, "external        "); 
+                mip &= ~(1<<11);
+                break;
+            }
             default: fprintf(saida, "unknown         "); break;
         }
     }else{
@@ -244,10 +253,12 @@ void CSR_Fluxo(uint32_t instrucao, uint8_t rd, uint8_t funct3, uint8_t rs1, int3
     }
 }
 
+int contador = 0;
+
 int check_int(uint32_t *mask) {
 
     if ((mstatus & (1 << 3)) == 0) return 0;
-
+    
     uint32_t sts = mip & mie;
     if (sts == 0) return 0; // n tem nem pendente, nem habilitada
     
@@ -300,7 +311,6 @@ void timer(uint8_t* mem){
         mip &= ~(1 << 7); 
     }
 }
-
 /* POXIM V1 */
 void load_entrada(FILE *entrada, uint8_t* mem){
     char token[16];
@@ -328,7 +338,10 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
 
 
     int cd = addrs_range(endereco);
-
+    if(cd < 0){
+        trap_capture( 7, endereco, saida);
+        return;
+    }
     uint32_t indx = endereco - offset[cd];
 
     switch (funct3){
@@ -364,8 +377,17 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         } else {
             mip &= ~(1 << 3); // Limpa interrupção de software
         }
+    }else if (endereco == 0x10000000) {
+        mem[ADDRS_LSR - offset[3]] |= RST_LSR; 
+        uint8_t ier = mem[0x10000001 - offset[3]];
+        
+        if (ier & 0x02) { 
+            mem[ADDRS_ISR - offset[3]] = 0x02; 
+            mip |= (1 << 11); 
+        }
     }
 }
+
 
 void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida, uint8_t* mem){ //0010011
     uint8_t funct7 = (imm >> 5) & 0b1111111;
@@ -737,9 +759,15 @@ int main (int argc, char *argv[]){
     fclose(entrada);
 
     pc = RAM_INF;
-    mem[0x10000002] = 0b00000001; // sem pendencia - interrupcao uart;
+    mem[ADDRS_ISR - offset[3]] = RST_ISR;
+    mem[ADDRS_LSR - offset[3]] = RST_LSR;
+
+    //int cnt = 0;
 
     while(run){
+
+        //if(++cnt > 150) break;
+
         if ((pc % 4 != 0) || addrs_range(pc) != 0) {
             trap_capture(1, 0, saida);
             pc += 4; 
