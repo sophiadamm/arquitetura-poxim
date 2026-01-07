@@ -174,7 +174,7 @@ void CSR_Fluxo(uint32_t instrucao, uint8_t rd, uint8_t funct3, uint8_t rs1, int3
                 break;
             }
             case 0b001100000010: { //mret
-                fprintf(saida, "0x%08x:mret                           pc=0x%08x\n", pc, mepc);
+                fprintf(saida, "0x%08x:mret                       pc=0x%08x\n", pc, mepc);
                 trap_return();
                 break;
             }
@@ -606,7 +606,7 @@ void R_type(uint32_t instrucao, uint8_t funct7, uint8_t rs1, uint8_t rs2, uint8_
                 x[rd] = (int32_t)(res >> 32);
                 snprintf(left, sizeof left, "0x%08x:mulhsu %s,%s,%s",  pc, nomex[rd], nomex[rs1], nomex[rs2]);
                 fprintf(saida,"%-37s %s=0x%08x*0x%08x=0x%08x\n",
-                       left, nomex[rs2],
+                       left,
                        nomex[rd], prev_rs1, prev_rs2, x[rd]);
             }else{
                 trap_capture(2, instrucao, saida);
@@ -823,8 +823,6 @@ int main (int argc, char *argv[]){
         }
 
         uint32_t icause;
-        uint8_t ISR = mem[ADDRS_ISR - offset[3]];
-        uint8_t LSR = mem[0x10000001 - offset[3]];
         if (check_int(&icause)) {
             trap_capture(icause, 0, saida);
             pc += 4;
