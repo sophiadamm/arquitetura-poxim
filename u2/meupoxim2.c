@@ -19,7 +19,7 @@
 
 #define RST_ISR  1
 #define ADDRS_ISR  0x10000002
-#define RST_LSR  60
+#define RST_LSR  0x60 
 #define ADDRS_LSR  0x10000005
 
 #define MTIME_HIGH   0x0200BFFC 
@@ -322,7 +322,7 @@ void timer(uint8_t* mem){
 }
 
 void update_uart_lsr(uint8_t* mem) {
-    if (!terminal_in) return; 
+    if (!terminal_in) return;
 
     uint32_t addr_lsr = ADDRS_LSR - offset[3];
 
@@ -370,6 +370,18 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
 
     switch (funct3){
         case 0x0: /*Store Byte*/{
+            if (endereco == 0x10000000) { // Transmissão de dados UART
+                char byte_out = (char)(dado & 0xFF);
+                if (terminal_out) {
+                    fputc(byte_out, terminal_out);
+                } 
+                mem[ADDRS_LSR - offset[3]] |= RST_LSR; 
+                uint8_t ier = mem[0x10000001 - offset[3]];
+                if (ier & 0x02) {
+                    mem[ADDRS_ISR - offset[3]] = 0x02;
+                    mip |= (1 << 11);
+                } 
+            }
             mem[indx] = (uint8_t)(dado & 0xFF);
             snprintf(left, sizeof left, "0x%08x:sb     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%02x\n",
@@ -403,18 +415,6 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
             mip |= (1 << 3);  // Ativa interrupção de software
         } else {
             mip &= ~(1 << 3); // Limpa interrupção de software
-        }
-    }else if (endereco == 0x10000000) { // Transmissão de dados UART
-        char byte_out = (char)(dado & 0xFF);
-
-        // 1. Escreve no arquivo de saida (terminal.out)
-        if (terminal_out) {
-            fputc(byte_out, terminal_out);
-            // fflush(terminal_out); // Garante escrita imediata (opcional)
-        } 
-        // 2. Escreve no console também (para você ver o que está acontecendo)
-        else {
-            printf("%c", byte_out);
         }
     }
 }
@@ -519,7 +519,22 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
 
     switch (funct3){
         case 0x0: /*Load Byte (lb) - extensão de sinal*/ {
+            if(endereco == 0x10000000){ // Leitura de dados UART
+                if(terminal_in){
+                    int c = fgetc(terminal_in);
+                    if (c != EOF) mem[indx] = (uint8_t)c; 
+                    else mem[indx] = (uint8_t)0;
+                }
+                mem[ADDRS_LSR - offset[3]] &= ~0x01;
+                uint8_t isr_atual = mem[ADDRS_ISR - offset[3]];
+                if ((isr_atual & 0x0F) == 0x04) { 
+                    mem[ADDRS_ISR - offset[3]] = RST_ISR; 
+                    mip &= ~(1 << 11); 
+                }
+            }
+            
             x[rd] = (int32_t)(int8_t)mem[indx]; //mem é unsigned
+            
             snprintf(left, sizeof left, "0x%08x:lb     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                     left,
@@ -562,30 +577,6 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
         }
         default:
             trap_capture(2, instrucao, saida);
-    }
-
-    if(endereco == 0x10000000){ // Leitura de dados UART (RHR)
-        if (terminal_in) {
-            int c = fgetc(terminal_in);
-            if (c != EOF) {
-                x[rd] = (int32_t)(uint8_t)c; // Joga pro registrador de destino
-                
-                // Opcional: Atualiza memória também pra manter coerência visual
-                mem[indx] = (uint8_t)c; 
-            } else {
-                x[rd] = 0; // Se tentar ler no fim do arquivo, retorna 0 ou erro
-            }
-        } else {
-            mem[ADDRS_LSR - offset[3]] &= ~0x01; 
-
-            uint8_t isr_atual = mem[ADDRS_ISR - offset[3]];
-            
-            if ((isr_atual & 0x0F) == 0x04) { 
-                mem[ADDRS_ISR - offset[3]] = RST_ISR; 
-                mip &= ~(1 << 11); 
-            }
-        }
-        mem[ADDRS_LSR - offset[3]] &= ~0x01;
     }
 
 }
