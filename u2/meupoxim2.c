@@ -325,12 +325,22 @@ void update_uart_lsr(uint8_t* mem) {
     if (!terminal_in) return;
 
     uint32_t addr_lsr = ADDRS_LSR - offset[3];
+    
+    // Calcula endereços do IER (Base + 1) e ISR (Base + 2)
+    uint32_t addr_ier = 0x10000001 - offset[3];
+    uint32_t addr_isr = ADDRS_ISR - offset[3];
 
     int c = fgetc(terminal_in);
     
     if (c != EOF) {
         ungetc(c, terminal_in);
-        mem[addr_lsr] |= 0x01;
+        mem[addr_lsr] |= 0x01; // Seta Data Ready (Bit 0)
+    
+        if (mem[addr_ier] & 0x01) {
+            mem[addr_isr] = 0x04;
+            mip |= (1 << 11);
+        }
+
     } else {
         mem[addr_lsr] &= ~0x01;
     }
