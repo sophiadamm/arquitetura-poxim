@@ -12,7 +12,7 @@
 #define CLINT_SUP  0x020c0000 
 
 #define PLIC_INF  0x0c000000
-#define PLIC_SUP  0x0c200004
+#define PLIC_SUP  0x0c200008
 
 #define UART_INF   0x10000000 
 #define UART_SUP   0x10000005  
@@ -62,6 +62,11 @@ uint32_t mcause = 0;  // Causa do Evento
 uint32_t mtval = 0;   // Endereço/Instrução inválido
 uint32_t mip = 0;     // Pendência de interrupção
 
+uint32_t addr_lsr = ADDRS_LSR - offset[3];
+uint32_t addr_ier = 0x10000001 - offset[3];
+uint32_t addr_isr = ADDRS_ISR - offset[3];
+uint32_t addr_pending = 0x0c001000 - offset[2];
+
 void write_csr(uint32_t csr_addr, uint32_t value) {
     switch (csr_addr) {
         case 0x300: mstatus = value; break;
@@ -106,6 +111,9 @@ uint32_t read_csr(uint32_t addr) {
 const uint32_t CLEAR_MASK = ((1 << 3) | (1 << 7));
 const uint32_t mode = ((1 << 11) | (1 << 12));
 
+
+int flg_isr = 0;
+
 void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
     mcause = cause;        
     mtval = tval;
@@ -124,9 +132,10 @@ void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
         switch (code) {
             case 3:  fprintf(saida, "software                   "); break;
             case 7:  fprintf(saida, "timer                      "); break;
-            case 11: {
-                     fprintf(saida, "external                   "); 
+            case 11:{
+                fprintf(saida, "external                   "); 
                 mip &= ~(1<<11);
+                flg_isr = 1;
                 break;
             }
             default: fprintf(saida, "unknown                    "); break;
@@ -183,7 +192,7 @@ void CSR_Fluxo(uint32_t instrucao, uint8_t rd, uint8_t funct3, uint8_t rs1, int3
                 break;
             }
             case 0b000000000001: { //ebreak
-                fprintf(saida, "0x%08x:ebreak\n", pc);
+                fprintf(saida, "0x%08x:ebreak", pc);
                 run = 0;
                 break;
             }
@@ -324,12 +333,6 @@ void timer(uint8_t* mem){
 void update_uart_lsr(uint8_t* mem) {
     if (!terminal_in) return;
 
-    uint32_t addr_lsr = ADDRS_LSR - offset[3];
-    
-    // Calcula endereços do IER (Base + 1) e ISR (Base + 2)
-    uint32_t addr_ier = 0x10000001 - offset[3];
-    uint32_t addr_isr = ADDRS_ISR - offset[3];
-
     int c = fgetc(terminal_in);
     
     if (c != EOF) {
@@ -338,6 +341,7 @@ void update_uart_lsr(uint8_t* mem) {
     
         if (mem[addr_ier] & 0x01) {
             mem[addr_isr] = 0x04;
+            mem[addr_pending] |= (1 << 10);
             mip |= (1 << 11);
         }
 
@@ -385,11 +389,12 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
                 if (terminal_out) {
                     fputc(byte_out, terminal_out);
                 } 
-                mem[ADDRS_LSR - offset[3]] |= RST_LSR; 
-                uint8_t ier = mem[0x10000001 - offset[3]];
+                mem[addr_lsr] |= RST_LSR; 
+                uint8_t ier = mem[addr_ier];
                 if (ier & 0x02) {
-                    mem[ADDRS_ISR - offset[3]] = 0x02;
+                    mem[addr_pending] |= (1 << 10);
                     mip |= (1 << 11);
+                    mem[addr_isr] = 0x02;
                 } 
             }
             mem[indx] = (uint8_t)(dado & 0xFF);
@@ -536,15 +541,14 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
                     else mem[indx] = (uint8_t)0;
                 }
                 mem[ADDRS_LSR - offset[3]] &= ~0x01;
-                uint8_t isr_atual = mem[ADDRS_ISR - offset[3]];
+                uint8_t isr_atual = mem[addr_isr];
                 if ((isr_atual & 0x0F) == 0x04) { 
-                    mem[ADDRS_ISR - offset[3]] = RST_ISR; 
+                    mem[addr_isr] = RST_ISR; 
                     mip &= ~(1 << 11); 
                 }
             }
             
-            x[rd] = (int32_t)(int8_t)mem[indx]; //mem é unsigned
-            
+            x[rd] = (int32_t)(int8_t)mem[indx]; //mem é unsigned 
             snprintf(left, sizeof left, "0x%08x:lb     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                     left,
@@ -561,6 +565,12 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x2: /*Load Word (lw) - sem extensão*/{
+            if(endereco == 0x0c200004){
+                if(mem[addr_pending] | (1 << 10)){
+                    mem[addr_pending] &=  ~(1 << 10);
+                    *(int32_t*)&mem[indx] = 0x0000000a;
+                }else *(int32_t*)&mem[indx] = 0;
+            }
             x[rd] = *(int32_t*)&mem[indx];
             snprintf(left, sizeof left, "0x%08x:lw     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida,"%-37s %s=mem[0x%08x]=0x%08x\n",
@@ -862,7 +872,7 @@ int main (int argc, char *argv[]){
     fclose(entrada);
 
     pc = RAM_INF;
-    mem[ADDRS_ISR - offset[3]] = RST_ISR;
+    mem[addr_isr] = RST_ISR;
     mem[ADDRS_LSR - offset[3]] = RST_LSR;
 
     while(run){
@@ -971,6 +981,11 @@ int main (int argc, char *argv[]){
         x[0] = 0;
         pc += 4;
         timer(mem);
+
+        if(flg_isr){
+            mem[addr_isr] = RST_ISR;
+            flg_isr = 0;
+        }
     }
     fclose(saida);
 }
