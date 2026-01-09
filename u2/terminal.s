@@ -1,8 +1,9 @@
 #Infos gerais:
-#a0 -> base da uart (RHR/THR) 
+#a0 -> base da uart (RHR/THR) | argumento e retorno de ler_inteiro
 #a1 -> endereço do vetor
 #t0 -> acumulador
 #s1 -> contar o loop
+#s2 -> endereco do vetor
 
 #Code section
 .section .text
@@ -13,13 +14,29 @@ main:
     addi sp, sp, -16
     sw ra, 0(sp)
 
-    li a0, 0x10000000      # base da uart (valor do inteiro)  
-    la a1, vetor           # la -> load addres
-
+    li a0, 0x10000000      # base da uart (valor do inteiro - retorno)  
     jal ra, ler_inteiro
 
     mv s1, a0           # s1 = N
+    la s2, vetor        # s2 = Ponteiro atual do vetor
 
+    beq s1, zero, fim_programa     # se N == 0
+
+loop_preencher_vetor:
+    li a0, 0x10000000 
+    jal ra, ler_inteiro
+    sw a0, 0(s2)   
+
+    # Avança o ponteiro do vetor para a próxima posição
+    addi s2, s2, 4      
+    
+    # Decrementa o contador N
+    addi s1, s1, -1
+    
+    bne s1, zero, loop_preencher_vetor
+
+fim_programa:
+    # --- EPILOGO ---
     lw ra, 0(sp)
     addi sp, sp, 16
     li a0, 0
@@ -62,7 +79,7 @@ trata_negativo:
 
 fim_leitura:
     mul a0, t0, t4
-    ret                 # Volta para a main
+    ret      
 
 # Data section
 .section .data
