@@ -4,6 +4,7 @@
 #t0 -> acumulador
 #s1 -> contar o loop
 #s2 -> endereco do vetor
+#s3 -> guardar o N
 
 #Code section
 .section .text
@@ -18,6 +19,7 @@ main:
     jal ra, ler_inteiro
 
     mv s1, a0           # s1 = N
+    mv s3, a0           # s3 = N
     la s2, vetor        # s2 = Ponteiro atual do vetor
 
     beq s1, zero, fim_programa     # se N == 0
@@ -34,6 +36,10 @@ loop_preencher_vetor:
     addi s1, s1, -1
     
     bne s1, zero, loop_preencher_vetor
+
+    mv a0, s3           
+    la a1, vetor       
+    jal ra, bubble_sort
 
 fim_programa:
     # --- EPILOGO ---
@@ -79,7 +85,47 @@ trata_negativo:
 
 fim_leitura:
     mul a0, t0, t4
-    ret      
+    ret     
+
+
+# -----------------------------------------------------------
+# Entrada: a0 = N (tamanho), a1 = Endereço do Vetor
+# -----------------------------------------------------------
+bubble_sort:
+    li t0, 0                # i = 0
+
+loop_externo:
+    bge t0, a0, fim_sort    # Se i >= N
+    
+    li t1, 0                # j = 0
+    addi t2, a0, -1         # Limite = N - 1
+
+loop_interno:
+    bge t1, t2, incremento_i # Se j >= N-1
+
+    # endereço = base + (j * 4)
+    slli t3, t1, 2          
+    add t3, a1, t3  
+
+    # --- LER VALORES ---
+    lw t4, 0(t3)            # t4 = vetor[j]
+    lw t5, 4(t3)            # t5 = vetor[j+1]
+
+    ble t4, t5, incremento_j
+
+    sw t5, 0(t3)          
+    sw t4, 4(t3)            
+
+incremento_j:
+    addi t1, t1, 1          # j++
+    j loop_interno
+
+incremento_i:
+    addi t0, t0, 1          # i++
+    j loop_externo
+
+fim_sort:
+    ret 
 
 # Data section
 .section .data
