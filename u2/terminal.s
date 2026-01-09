@@ -57,7 +57,9 @@ fim_programa:
     ret
 
 
-# Polling - com esperas
+# -----------------------------------------------------------
+# Ler um inteiro
+# -----------------------------------------------------------
 ler_inteiro:
     li t0, 0            # acumulador
     li t4, 1            # sinal (1 = positivo, -1 = negativo)
@@ -95,9 +97,8 @@ fim_leitura:
     mul a0, t0, t4
     ret     
 
-
 # -----------------------------------------------------------
-# Entrada: a0 = N (tamanho), a1 = Endereço do Vetor
+# Bubble Sort
 # -----------------------------------------------------------
 bubble_sort:
     li t0, 0                # i = 0
@@ -134,6 +135,61 @@ incremento_i:
 
 fim_sort:
     ret 
+
+# -----------------------------------------------------------
+# Transmissão para UART
+# -----------------------------------------------------------
+escrever_inteiro:
+    li t5, 32           # ASCII Espaço
+    bne a0, zero, verifica_sinal
+
+    #se tá aqui é porque a0 guar o valor 0
+    li t0, 48           # ASCII '0'
+    sb t0, 0(s0)        # Escreve na UART
+    sb t5, 0(s0)
+    ret
+
+verifica_sinal:
+    bge a0, zero, inic_empilha  # a0 >= 0
+    
+    # Se for negativo:
+    li t0, 45           # ASCII '-'
+    sb t0, 0(s0)        # Imprime o sinal
+    sub a0, zero, a0    # Inverte o sinal pra conta
+
+inic_empilha:
+    li t3, 0            # Contador de dígitos empilhados
+    li t4, 10           # Divisor
+
+loop_empilha:
+    beq a0, zero, loop_desempilha # Se o número acabou (ficou 0)
+    
+    rem t1, a0, t4      # t1 = a0 % 10 
+    div a0, a0, t4      # a0 = a0 / 10
+    
+    addi t1, t1, 48     # inteiro -> aiscii
+    
+    # stack temporária
+    addi sp, sp, -4
+    sw t1, 0(sp)
+    
+    addi t3, t3, 1
+    j loop_empilha
+
+loop_desempilha:
+    beq t3, zero, fim_escrita   # t3 == 0
+    
+    lw t0, 0(sp)
+    addi sp, sp, 4  
+    
+    sb t0, 0(s0)        # Manda pra UART
+    
+    addi t3, t3, -1     # t3--
+    j loop_desempilha
+
+fim_escrita:
+    sb t5, 0(s0)
+    ret
 
 # Data section
 .section .data
