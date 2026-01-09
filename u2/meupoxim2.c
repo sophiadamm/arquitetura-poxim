@@ -875,7 +875,11 @@ int main (int argc, char *argv[]){
     mem[addr_isr] = RST_ISR;
     mem[ADDRS_LSR - offset[3]] = RST_LSR;
 
+    int cnt = 0;
+
     while(run){
+
+        //if(++cnt >= 50000) break;
 
         update_uart_lsr(mem);
 

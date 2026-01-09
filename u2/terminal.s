@@ -45,6 +45,23 @@ loop_preencher_vetor:
     la a1, vetor       
     jal ra, bubble_sort
 
+    mv s1, s3           
+    la s2, vetor        
+
+loop_imprimir_vetor:
+    lw a0, 0(s2)
+    jal ra, escrever_inteiro
+    
+    addi s2, s2, 4      # s2++
+    addi s1, s1, -1     # s1--
+
+    beq s1, zero, fim_programa
+
+    li t0, 44           # ','
+    sb t0, 0(s0)
+    
+    j loop_imprimir_vetor
+
 fim_programa:
     # --- EPILOGO ---
     lw ra, 0(sp)
@@ -63,15 +80,21 @@ fim_programa:
 ler_inteiro:
     li t0, 0            # acumulador
     li t4, 1            # sinal (1 = positivo, -1 = negativo)
+    li t5, 0            # Flag: 0 = Não leu dígitos ainda, 1 = Já leu
 
 loop_leitura: 
     # Verificar se tem o dado - LSR (deslocamento de 5 da base)
     lb t1, 5(s0)       
     andi t1, t1, 1      # isola o bit 0 (Data Ready)
-    beq t1, zero, loop_leitura  # Se for 0, não tem dado. Volta e espera.
+    
+    bne t1, zero, tem_dado 
 
+    bne t5, zero, fim_leitura  # estavamos lendo algo e o arquivo acabou
+    j loop_leitura             # n comecou nenhuma leitura ainda
+
+tem_dado:
     # Ler o dado de RHR
-    lb t2, 0(a0)       
+    lb t2, 0(s0)       
 
     li t3, 32           # ASCII do Espaço
     beq t2, t3, fim_leitura
@@ -87,6 +110,7 @@ loop_leitura:
     mul t0, t0, t3   
     add t0, t0, t2 
 
+    li t5, 1
     j loop_leitura
 
 trata_negativo:
@@ -140,14 +164,13 @@ fim_sort:
 # Transmissão para UART
 # -----------------------------------------------------------
 escrever_inteiro:
-    li t5, 32           # ASCII Espaço
+    
     bne a0, zero, verifica_sinal
 
     #se tá aqui é porque a0 guar o valor 0
     li t0, 48           # ASCII '0'
     sb t0, 0(s0)        # Escreve na UART
-    sb t5, 0(s0)
-    ret
+    j fim_escrita
 
 verifica_sinal:
     bge a0, zero, inic_empilha  # a0 >= 0
@@ -188,7 +211,6 @@ loop_desempilha:
     j loop_desempilha
 
 fim_escrita:
-    sb t5, 0(s0)
     ret
 
 # Data section
