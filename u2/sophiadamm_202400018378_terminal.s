@@ -2,6 +2,7 @@
 #a0 -> base da uart (RHR/THR) 
 #a1 -> endereço do vetor
 #t0 -> acumulador
+#s1 -> contar o loop
 
 #Code section
 .section .text
@@ -17,6 +18,8 @@ main:
 
     jal ra, ler_inteiro
 
+    mv s1, a0           # s1 = N
+
     lw ra, 0(sp)
     addi sp, sp, 16
     li a0, 0
@@ -26,6 +29,7 @@ main:
 # Polling - com esperas
 ler_inteiro:
     li t0, 0            # acumulador
+    li t4, 1            # sinal (1 = positivo, -1 = negativo)
 
 loop_leitura: 
     # Verificar se tem o dado - LSR (deslocamento de 5 da base)
@@ -38,18 +42,26 @@ loop_leitura:
 
     li t3, 32           # ASCII do Espaço
     beq t2, t3, fim_leitura
+
+    li t3, 45           # AISCII de -
+    beq t2, t3, trata_negativo
+
     li t3, 10           # ASCII do "\n" e valor para multiplicar dps
     beq t2, t3, fim_leitura
 
     addi t2, t2, -48    # aiscii -> inteiro
-
+    
     mul t0, t0, t3   
     add t0, t0, t2 
 
     j loop_leitura
 
+trata_negativo:
+    li t4, -1    
+    j loop_leitura
+
 fim_leitura:
-    mv a0, t0           # Move o resultado final (t0) para o registrador de retorno (a0)
+    mul a0, t0, t4
     ret                 # Volta para a main
 
 # Data section
