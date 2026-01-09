@@ -1,6 +1,6 @@
 #Infos gerais:
-#a0 -> base da uart (RHR/THR) | argumento e retorno de ler_inteiro
-#a1 -> endereço do vetor
+#s0 -> base da uart (RHR/THR) 
+#a0 -> valor de retorno
 #t0 -> acumulador
 #s1 -> contar o loop
 #s2 -> endereco do vetor
@@ -12,10 +12,10 @@
 # Main function
 .global main
 main:
-    addi sp, sp, -16
+    addi sp, sp, -32
     sw ra, 0(sp)
 
-    li a0, 0x10000000      # base da uart (valor do inteiro - retorno)  
+    li s0, 0x10000000     # base da uart (valor do inteiro - retorno)  
     jal ra, ler_inteiro
 
     mv s1, a0           # s1 = N
@@ -25,7 +25,7 @@ main:
     beq s1, zero, fim_programa     # se N == 0
 
 loop_preencher_vetor:
-    li a0, 0x10000000 
+
     jal ra, ler_inteiro
     sw a0, 0(s2)   
 
@@ -44,7 +44,7 @@ loop_preencher_vetor:
 fim_programa:
     # --- EPILOGO ---
     lw ra, 0(sp)
-    addi sp, sp, 16
+    addi sp, sp, 32
     li a0, 0
     ret
 
@@ -56,7 +56,7 @@ ler_inteiro:
 
 loop_leitura: 
     # Verificar se tem o dado - LSR (deslocamento de 5 da base)
-    lb t1, 5(a0)        
+    lb t1, 5(s0)       
     andi t1, t1, 1      # isola o bit 0 (Data Ready)
     beq t1, zero, loop_leitura  # Se for 0, não tem dado. Volta e espera.
 
