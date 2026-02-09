@@ -37,6 +37,20 @@ const uint32_t offset[4] = {
     UART_INF - (RAM_SUP - RAM_INF + CLINT_SUP - CLINT_INF + PLIC_SUP - PLIC_INF + 3)
 };
 
+/*----------POXIM V3------------
+2 caches -> uma para instruções e outra para dados
+capacidade -> 256 bytes
+blocos de 4 palavras
+associatividade grau 2
+política LRU, write-trough, sem write allocate
+*/
+
+
+uint32_t i_hits = 0, i_accesses = 0;
+uint32_t d_hits = 0, d_accesses = 0;
+
+/*----------POXIM V2------------*/
+
 char left[64];
 uint8_t run = 1;
 uint32_t pc = 0;
@@ -50,7 +64,6 @@ size_t tam_end =
     (PLIC_SUP  - PLIC_INF  + 1) +
     (UART_SUP  - UART_INF  + 1);
 
-/*----------POXIM V2------------*/
 
 //Registradores CSR
 uint32_t mstatus = 0; // Registrador de status

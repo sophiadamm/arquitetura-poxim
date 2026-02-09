@@ -33,14 +33,15 @@ loop_preencher_vetor:
     jal ra, ler_inteiro
     sw a0, 0(s2)   
 
-    # Avança o ponteiro do vetor para a próxima posição
+    # Avança o ponteiro do vetor 
     addi s2, s2, 4      
     
-    # Decrementa o contador N
+    # Decrementa o contador 
     addi s1, s1, -1
     
     bne s1, zero, loop_preencher_vetor
-
+    
+    # a0 e a1 -> argumentos do bubble_sort
     mv a0, s3           
     la a1, vetor       
     jal ra, bubble_sort
@@ -131,7 +132,8 @@ loop_externo:
     bge t0, a0, fim_sort    # Se i >= N
     
     li t1, 0                # j = 0
-    addi t2, a0, -1         # Limite = N - 1
+    sub t2, a0, t0          # Limite = N - i
+    addi t2, t2, -1         # Limite = N - i - 1
 
 loop_interno:
     bge t1, t2, incremento_i # Se j >= N-1
@@ -170,7 +172,7 @@ escrever_inteiro:
     #se tá aqui é porque a0 guar o valor 0
     li t0, 48           # ASCII '0'
     sb t0, 0(s0)        # Escreve na UART
-    j fim_escrita
+    ret
 
 verifica_sinal:
     bge a0, zero, inic_empilha  # a0 >= 0
