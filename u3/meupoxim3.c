@@ -86,7 +86,29 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE
         hits[d_i]++;
         flg_h = 1;
         flg_way = 1;
-    }else{
+    }
+
+    if(flg_h){ /*Hit*/
+        if(r_w == 'r') val_ret = cache[d_i][index][flg_way].data[word_offset];
+        else{
+            cache[d_i][index][flg_way].data[word_offset] = value;
+            *(uint32_t*)&mem[addr - offset[addrs_range(addr)]] = value; // write through
+        }
+
+        cache[d_i][index][flg_way].lru = 1; 
+        cache[d_i][index][flg_way^1].lru = 0;
+
+        fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%06x,block[%d]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
+            type_char, r_w, addr, index, 
+            cache[d_i][index][flg_way].lru, 
+            tag, 
+            word_offset, 
+            cache[d_i][index][flg_way].data[0], cache[d_i][index][flg_way].data[1],
+            cache[d_i][index][flg_way].data[2], cache[d_i][index][flg_way].data[3]
+        );
+
+
+    }else{ /*Miss*/
 
         fprintf(saida, "#cache_mem:%c%cm    0x%08x          line=%u,valid={%d,%d},age={%d,%d},id={0x%06x,0x%06x}\n",
             type_char, r_w, addr,
@@ -96,53 +118,29 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE
             cache[d_i][index][0].tag,   cache[d_i][index][1].tag
         );
 
-        // Cache miss: buscar bloco na memória
-        uint32_t block_addr = addr & ~0b1111; // Endereço do bloco (16 bytes)
-
-        // Escolhe qual bloco substituir usando LRU
-        flg_way = (cache[d_i][index][0].lru == 1) ? 1 : 0;
-
-        // Atualiza dados na cache
-        cache[d_i][index][flg_way].valid = 1;
-        cache[d_i][index][flg_way].tag = tag;
-
-        //Traz o bloco da memória principal para a cache
-        uint32_t block_data[4];
-        for (int i = 0; i < 4; i++) {
-            block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
-            cache[d_i][index][flg_way].data[i] = block_data[i];
-        }
-        
+        if(r_w == 'r') {
+            // Cache miss: buscar bloco na memória
+            uint32_t block_addr = addr & ~0b1111; // Endereço do bloco (16 bytes)
+            // Escolhe qual bloco substituir usando LRU
+            flg_way = (cache[d_i][index][0].lru == 1) ? 1 : 0;
+            // Atualiza dados na cache
+            cache[d_i][index][flg_way].valid = 1;
+            cache[d_i][index][flg_way].tag = tag;
+            cache[d_i][index][flg_way].lru = 1; 
+            cache[d_i][index][flg_way^1].lru = 0;
+            //Traz o bloco da memória principal para a cache
+            uint32_t block_data[4];
+            for (int i = 0; i < 4; i++) {
+                block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
+                cache[d_i][index][flg_way].data[i] = block_data[i];
+            }
+            val_ret = cache[d_i][index][flg_way].data[word_offset];
+        }else *(uint32_t*)&mem[addr - offset[addrs_range(addr)]] = value; // write through
     }
-
-    cache[d_i][index][flg_way].lru = 1; 
-    cache[d_i][index][flg_way^1].lru = 0;
-
-    if (r_w == 'w') {
-        cache[d_i][index][flg_way].data[word_offset] = value; // na cache
-        *(uint32_t*)&mem[addr - offset[addrs_range(addr)]] = value; // write through
-    } else {
-        val_ret = cache[d_i][index][flg_way].data[word_offset];
-    }      
-    
-    if (flg_h) {
-         fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%06x,block[%d]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
-            type_char, r_w, addr, index, 
-            cache[d_i][index][flg_way].lru, 
-            tag, 
-            word_offset, 
-            cache[d_i][index][flg_way].data[0], cache[d_i][index][flg_way].data[1],
-            cache[d_i][index][flg_way].data[2], cache[d_i][index][flg_way].data[3]
-         );
-    } 
 
     return val_ret;
 }
 
-void write_cache(uint32_t addr, uint32_t value, uint8_t* cache, uint8_t tp) {
-
-    //Decodificar endereço 
-}
 
 /*----------POXIM V2------------*/
 
