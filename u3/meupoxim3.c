@@ -37,17 +37,109 @@ const uint32_t offset[4] = {
     UART_INF - (RAM_SUP - RAM_INF + CLINT_SUP - CLINT_INF + PLIC_SUP - PLIC_INF + 3)
 };
 
+int addrs_range(uint32_t addr){
+    if(addr >= RAM_INF && addr <= RAM_SUP) return 0;
+    if(addr >= CLINT_INF && addr <= CLINT_SUP) return 1;
+    if(addr >= PLIC_INF && addr <= PLIC_SUP) return 2;
+    if(addr >= UART_INF && addr <= UART_SUP) return 3;
+    return -1;
+}
+
+
 /*----------POXIM V3------------
-2 caches -> uma para instruções e outra para dados
-capacidade -> 256 bytes
-blocos de 4 palavras
-associatividade grau 2
+2 caches de 256 bytes -> uma para instruções e outra para dados
+blocos de 4 palavras (16 bytes por bloco -> 16 blocos por cache)
+associatividade grau 2 (8 sets por cache, 2 blocos por set)
+(1 bit de validade, 1 bit de LRU )
+(27 bits de tag, 3 bits de index, 2 bits para word offset, 2 bits para byte offset)
 política LRU, write-trough, sem write allocate
-*/
+------------------------------*/
+
+uint32_t hits[2], accesses[2];
+typedef struct {
+    uint8_t valid;      
+    uint32_t tag;        
+    uint8_t lru;        
+    uint32_t data[4];
+} CacheLine;
+
+CacheLine cache [2][8][2]; // [tp][set/index][way]
 
 
-uint32_t i_hits = 0, i_accesses = 0;
-uint32_t d_hits = 0, d_accesses = 0;
+uint32_t read_cache(uint32_t addr, uint8_t tp, FILE* saida, uint8_t* mem) {
+    accesses[tp]++;
+    // Decodificar endereço 
+    uint8_t index = (addr >> 4) & 0x7; // 3 bits de index
+    uint32_t tag = addr >> 7; // 25 bits de tag
+    //uint8_t byte_offset = addr & 0b11; // 2 bits de offset
+    uint8_t word_offset = (addr & 0b01100) >> 2;
+    uint32_t value;
+
+    uint8_t flg_h, flg_way;
+
+    if(cache[tp][index][0].valid && cache[tp][index][0].tag == tag){
+        hits[tp]++;
+        flg_h = 1;
+        flg_way = 0;
+
+        value = cache[tp][index][0].data[word_offset];
+        cache[tp][index][0].lru = 1; 
+        cache[tp][index][1].lru = 0; 
+    }else if(cache[tp][index][1].valid && cache[tp][index][1].tag == tag){
+        hits[tp]++;
+        flg_h = 1;
+        flg_way = 1;
+        value = cache[tp][index][1].data[word_offset];
+        cache[tp][index][1].lru = 1; 
+        cache[tp][index][0].lru = 0; 
+    }else{
+        // Cache miss: buscar bloco na memória
+        uint32_t block_addr = addr & ~0b1111; // Endereço do bloco (16 bytes)
+        uint32_t block_data[4];
+        for (int i = 0; i < 4; i++) {
+            block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
+        }
+
+        flg_way = (cache[tp][index][0].lru == 1) ? 1 : 0;
+
+        // Escrever o bloco na cache
+        cache[tp][index][flg_way].valid = 1;
+        cache[tp][index][flg_way].tag = tag;
+        cache[tp][index][flg_way].lru = 1; 
+        cache[tp][index][flg_way^1].lru = 0;
+        
+        for(int k=0; k<4; k++) cache[tp][index][flg_way].data[k] = block_data[k];
+
+        value = cache[tp][index][flg_way].data[word_offset];
+    }
+
+    char type_char = (tp == 0) ? 'i' : 'd';      
+    
+    if (flg_h) {
+         fprintf(saida, "#cache_mem:%crh    0x%08x          line=%u,age=%d,id=0x%06x,block[%d]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
+            type_char, addr, index, 
+            cache[tp][index][flg_way].lru, 
+            tag, 
+            word_offset, 
+            cache[tp][index][flg_way].data[0], cache[tp][index][flg_way].data[1],
+            cache[tp][index][flg_way].data[2], cache[tp][index][flg_way].data[3]
+         );
+    }else{
+        fprintf(saida, "#cache_mem:%crm    0x%08x          line=%u,valid={%d,%d},age={%d,%d},id={0x%06x,0x%06x}\n",
+            type_char, addr,
+            index,
+            cache[tp][index][0].valid, cache[tp][index][1].valid,
+            cache[tp][index][0].lru,   cache[tp][index][1].lru,
+            cache[tp][index][0].tag,   cache[tp][index][1].tag
+        );
+    }
+
+    return value;
+}
+void write_cache(uint32_t addr, uint32_t value, uint8_t* cache, uint8_t tp) {
+
+    //Decodificar endereço 
+}
 
 /*----------POXIM V2------------*/
 
@@ -122,8 +214,6 @@ uint32_t read_csr(uint32_t addr) {
 
 const uint32_t CLEAR_MASK = ((1 << 3) | (1 << 7));
 const uint32_t mode = ((1 << 11) | (1 << 12));
-
-
 int flg_isr = 0;
 
 void trap_capture(uint32_t cause, uint32_t tval, FILE *saida){
@@ -308,14 +398,6 @@ int check_int(uint32_t *mask) {
     return 0;
 }
 
-int addrs_range(uint32_t addr){
-    if(addr >= RAM_INF && addr <= RAM_SUP) return 0;
-    if(addr >= CLINT_INF && addr <= CLINT_SUP) return 1;
-    if(addr >= PLIC_INF && addr <= PLIC_SUP) return 2;
-    if(addr >= UART_INF && addr <= UART_SUP) return 3;
-    return -1;
-}
-
 void timer(uint8_t* mem){
     uint32_t addr_mtime_low    = MTIME_LOW - offset[1];
     uint32_t addr_mtime_high   = MTIME_HIGH - offset[1];
@@ -361,7 +443,7 @@ void update_uart_lsr(uint8_t* mem) {
         mem[addr_lsr] &= ~0x01;
     }
 }
-/* POXIM V1 */
+/*----------POXIM V1------------*/
 void load_entrada(FILE *entrada, uint8_t* mem){
     char token[16];
     uint32_t curr = 0; //endereço atual 
@@ -445,7 +527,6 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         }
     }
 }
-
 
 void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida, uint8_t* mem){ //0010011
     uint8_t funct7 = (imm >> 5) & 0b1111111;
@@ -880,6 +961,8 @@ int main (int argc, char *argv[]){
     }
 
     uint8_t* mem = (uint8_t*)(malloc(tam_end)); 
+    uint8_t*cache_i = (uint8_t*)(malloc(256)); // 256 bytes de cache para instruções
+    uint8_t*cache_d = (uint8_t*)(malloc(256)); // 256 bytes de cache para dados
     load_entrada(entrada, mem);
     fclose(entrada);
 
