@@ -66,76 +66,79 @@ typedef struct {
 CacheLine cache [2][8][2]; // [tp][set/index][way]
 
 
-uint32_t read_cache(uint32_t addr, uint8_t tp, FILE* saida, uint8_t* mem) {
-    accesses[tp]++;
+uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE* saida, uint8_t* mem) {
+    accesses[d_i]++;
     // Decodificar endereço 
     uint8_t index = (addr >> 4) & 0x7; // 3 bits de index
     uint32_t tag = addr >> 7; // 25 bits de tag
     //uint8_t byte_offset = addr & 0b11; // 2 bits de offset
     uint8_t word_offset = (addr & 0b01100) >> 2;
-    uint32_t value;
+    uint32_t val_ret = value;
 
-    uint8_t flg_h, flg_way;
+    uint8_t flg_h = 0, flg_way = 0;
+    char type_char = (d_i == 0) ? 'i' : 'd';
 
-    if(cache[tp][index][0].valid && cache[tp][index][0].tag == tag){
-        hits[tp]++;
+    if(cache[d_i][index][0].valid && cache[d_i][index][0].tag == tag){
+        hits[d_i]++;
         flg_h = 1;
         flg_way = 0;
-
-        value = cache[tp][index][0].data[word_offset];
-        cache[tp][index][0].lru = 1; 
-        cache[tp][index][1].lru = 0; 
-    }else if(cache[tp][index][1].valid && cache[tp][index][1].tag == tag){
-        hits[tp]++;
+    }else if(cache[d_i][index][1].valid && cache[d_i][index][1].tag == tag){
+        hits[d_i]++;
         flg_h = 1;
         flg_way = 1;
-        value = cache[tp][index][1].data[word_offset];
-        cache[tp][index][1].lru = 1; 
-        cache[tp][index][0].lru = 0; 
     }else{
+
+        fprintf(saida, "#cache_mem:%c%cm    0x%08x          line=%u,valid={%d,%d},age={%d,%d},id={0x%06x,0x%06x}\n",
+            type_char, r_w, addr,
+            index,
+            cache[d_i][index][0].valid, cache[d_i][index][1].valid,
+            cache[d_i][index][0].lru,   cache[d_i][index][1].lru,
+            cache[d_i][index][0].tag,   cache[d_i][index][1].tag
+        );
+
         // Cache miss: buscar bloco na memória
         uint32_t block_addr = addr & ~0b1111; // Endereço do bloco (16 bytes)
+
+        // Escolhe qual bloco substituir usando LRU
+        flg_way = (cache[d_i][index][0].lru == 1) ? 1 : 0;
+
+        // Atualiza dados na cache
+        cache[d_i][index][flg_way].valid = 1;
+        cache[d_i][index][flg_way].tag = tag;
+
+        //Traz o bloco da memória principal para a cache
         uint32_t block_data[4];
         for (int i = 0; i < 4; i++) {
             block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
+            cache[d_i][index][flg_way].data[i] = block_data[i];
         }
-
-        flg_way = (cache[tp][index][0].lru == 1) ? 1 : 0;
-
-        // Escrever o bloco na cache
-        cache[tp][index][flg_way].valid = 1;
-        cache[tp][index][flg_way].tag = tag;
-        cache[tp][index][flg_way].lru = 1; 
-        cache[tp][index][flg_way^1].lru = 0;
         
-        for(int k=0; k<4; k++) cache[tp][index][flg_way].data[k] = block_data[k];
-
-        value = cache[tp][index][flg_way].data[word_offset];
     }
 
-    char type_char = (tp == 0) ? 'i' : 'd';      
+    cache[d_i][index][flg_way].lru = 1; 
+    cache[d_i][index][flg_way^1].lru = 0;
+
+    if (r_w == 'w') {
+        cache[d_i][index][flg_way].data[word_offset] = value; // na cache
+        *(uint32_t*)&mem[addr - offset[addrs_range(addr)]] = value; // write through
+    } else {
+        val_ret = cache[d_i][index][flg_way].data[word_offset];
+    }      
     
     if (flg_h) {
-         fprintf(saida, "#cache_mem:%crh    0x%08x          line=%u,age=%d,id=0x%06x,block[%d]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
-            type_char, addr, index, 
-            cache[tp][index][flg_way].lru, 
+         fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%06x,block[%d]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
+            type_char, r_w, addr, index, 
+            cache[d_i][index][flg_way].lru, 
             tag, 
             word_offset, 
-            cache[tp][index][flg_way].data[0], cache[tp][index][flg_way].data[1],
-            cache[tp][index][flg_way].data[2], cache[tp][index][flg_way].data[3]
+            cache[d_i][index][flg_way].data[0], cache[d_i][index][flg_way].data[1],
+            cache[d_i][index][flg_way].data[2], cache[d_i][index][flg_way].data[3]
          );
-    }else{
-        fprintf(saida, "#cache_mem:%crm    0x%08x          line=%u,valid={%d,%d},age={%d,%d},id={0x%06x,0x%06x}\n",
-            type_char, addr,
-            index,
-            cache[tp][index][0].valid, cache[tp][index][1].valid,
-            cache[tp][index][0].lru,   cache[tp][index][1].lru,
-            cache[tp][index][0].tag,   cache[tp][index][1].tag
-        );
-    }
+    } 
 
-    return value;
+    return val_ret;
 }
+
 void write_cache(uint32_t addr, uint32_t value, uint8_t* cache, uint8_t tp) {
 
     //Decodificar endereço 
