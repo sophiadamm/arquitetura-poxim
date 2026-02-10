@@ -45,12 +45,14 @@ int addrs_range(uint32_t addr){
     return -1;
 }
 
+uint8_t* mem;
+
 
 /*----------POXIM V3------------
 2 caches de 256 bytes -> uma para instruções e outra para dados
 blocos de 4 palavras (16 bytes por bloco -> 16 blocos por cache)
 associatividade grau 2 (8 sets por cache, 2 blocos por set)
-(1 bit de validade, 1 bit de LRU )
+(1 bit de validade, 1 bit de age )
 (27 bits de tag, 3 bits de index, 2 bits para word offset, 2 bits para byte offset)
 política LRU, write-trough, sem write allocate
 ------------------------------*/
@@ -66,7 +68,7 @@ typedef struct {
 CacheLine cache [2][8][2]; // [tp][set/index][way]
 
 
-uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE* saida, uint8_t* mem) {
+uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE* saida) {
     accesses[d_i]++;
     // Decodificar endereço 
     uint8_t index = (addr >> 4) & 0x7; // 3 bits de index
@@ -94,27 +96,28 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE
             cache[d_i][index][flg_way].data[word_offset] = value;
             *(uint32_t*)&mem[addr - offset[addrs_range(addr)]] = value; // write through
         }
+        
+        cache[d_i][index][flg_way].lru = accesses[d_i];
 
-        cache[d_i][index][flg_way].lru = 1; 
-        cache[d_i][index][flg_way^1].lru = 0;
-
-        fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%06x,block[%d]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
+        fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%06x,block[%u]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
             type_char, r_w, addr, index, 
-            cache[d_i][index][flg_way].lru, 
-            tag, 
-            word_offset, 
+            0, 
+            tag,  
+            flg_way,
             cache[d_i][index][flg_way].data[0], cache[d_i][index][flg_way].data[1],
             cache[d_i][index][flg_way].data[2], cache[d_i][index][flg_way].data[3]
         );
 
-
     }else{ /*Miss*/
 
+        int age0 = cache[d_i][index][0].lru > 0? accesses[d_i] - cache[d_i][index][0].lru : 0;
+        int age1 = cache[d_i][index][1].lru > 0? accesses[d_i] - cache[d_i][index][1].lru : 0;
+        
         fprintf(saida, "#cache_mem:%c%cm    0x%08x          line=%u,valid={%d,%d},age={%d,%d},id={0x%06x,0x%06x}\n",
             type_char, r_w, addr,
             index,
             cache[d_i][index][0].valid, cache[d_i][index][1].valid,
-            cache[d_i][index][0].lru,   cache[d_i][index][1].lru,
+            age0, age1,
             cache[d_i][index][0].tag,   cache[d_i][index][1].tag
         );
 
@@ -122,12 +125,11 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE
             // Cache miss: buscar bloco na memória
             uint32_t block_addr = addr & ~0b1111; // Endereço do bloco (16 bytes)
             // Escolhe qual bloco substituir usando LRU
-            flg_way = (cache[d_i][index][0].lru == 1) ? 1 : 0;
+            flg_way = (cache[d_i][index][0].lru <= cache[d_i][index][1].lru) ? 0 : 1;
             // Atualiza dados na cache
             cache[d_i][index][flg_way].valid = 1;
             cache[d_i][index][flg_way].tag = tag;
-            cache[d_i][index][flg_way].lru = 1; 
-            cache[d_i][index][flg_way^1].lru = 0;
+            cache[d_i][index][flg_way].lru = accesses[d_i];
             //Traz o bloco da memória principal para a cache
             uint32_t block_data[4];
             for (int i = 0; i < 4; i++) {
@@ -295,7 +297,9 @@ void CSR_Fluxo(uint32_t instrucao, uint8_t rd, uint8_t funct3, uint8_t rs1, int3
                 break;
             }
             case 0b000000000001: { //ebreak
-                fprintf(saida, "0x%08x:ebreak", pc);
+                access_cache(pc-4, 0, 'r', 0, saida);
+                access_cache(pc+4, 0, 'r', 0, saida);
+                fprintf(saida, "0x%08x:ebreak\n", pc);
                 run = 0;
                 break;
             }
@@ -399,7 +403,7 @@ int check_int(uint32_t *mask) {
     return 0;
 }
 
-void timer(uint8_t* mem){
+void timer(){
     uint32_t addr_mtime_low    = MTIME_LOW - offset[1];
     uint32_t addr_mtime_high   = MTIME_HIGH - offset[1];
     uint32_t addr_mtimecmp_low = MTIMECMP_LOW - offset[1];
@@ -425,7 +429,7 @@ void timer(uint8_t* mem){
     }
 }
 
-void update_uart_lsr(uint8_t* mem) {
+void update_uart_lsr() {
     if (!terminal_in) return;
 
     int c = fgetc(terminal_in);
@@ -445,7 +449,7 @@ void update_uart_lsr(uint8_t* mem) {
     }
 }
 /*----------POXIM V1------------*/
-void load_entrada(FILE *entrada, uint8_t* mem){
+void load_entrada(FILE *entrada){
     char token[16];
     uint32_t curr = 0; //endereço atual 
     while (fscanf(entrada, "%s", token) == 1) {
@@ -465,7 +469,7 @@ void load_entrada(FILE *entrada, uint8_t* mem){
     }
 }
 
-void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t funct3, FILE* saida, uint8_t* mem){ //0100011
+void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t funct3, FILE* saida){ //0100011
     uint32_t endereco = x[rs1] + (int32_t)imm; 
     int32_t dado = x[rs2];
 
@@ -529,7 +533,7 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
     }
 }
 
-void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida, uint8_t* mem){ //0010011
+void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida){ //0010011
     uint8_t funct7 = (imm >> 5) & 0b1111111;
     uint8_t shamt = imm & 0b11111;
     int32_t prev_rs1 = x[rs1];
@@ -616,7 +620,7 @@ void I_type_imm(uint32_t instrucao, int32_t imm, uint8_t rs1, uint8_t funct3, ui
     }
 }
 
-void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida, uint8_t* mem) { //0000011
+void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, uint8_t rd, FILE* saida) { //0000011
 
     uint32_t endereco = x[rs1] + (int32_t)imm; 
     int cd = addrs_range(endereco);
@@ -961,10 +965,8 @@ int main (int argc, char *argv[]){
         if (!terminal_out) perror("Aviso: Não foi possível abrir terminal.out");
     }
 
-    uint8_t* mem = (uint8_t*)(malloc(tam_end)); 
-    uint8_t*cache_i = (uint8_t*)(malloc(256)); // 256 bytes de cache para instruções
-    uint8_t*cache_d = (uint8_t*)(malloc(256)); // 256 bytes de cache para dados
-    load_entrada(entrada, mem);
+    mem = (uint8_t*)(malloc(tam_end)); 
+    load_entrada(entrada);
     fclose(entrada);
 
     pc = RAM_INF;
@@ -973,7 +975,8 @@ int main (int argc, char *argv[]){
 
     while(run){
 
-        update_uart_lsr(mem);
+        update_uart_lsr();
+        uint32_t instrucao = access_cache(pc, 0, 'r', 0, saida);
 
         if ((pc % 4 != 0) || addrs_range(pc) != 0) {
             trap_capture(1, 0, saida);
@@ -989,7 +992,6 @@ int main (int argc, char *argv[]){
         }
 
         //uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
-        uint32_t instrucao = access_cache(pc, 0, 'r', 0, saida, mem);
         uint8_t opcode = instrucao & 0b1111111;              // bits 6:0
         uint8_t rd     = (instrucao >> 7) & 0b11111;         // bits 11:7
         uint8_t funct3 = (instrucao >> 12) & 0b111;          // bits 14:12
@@ -1005,17 +1007,17 @@ int main (int argc, char *argv[]){
                 break;
             }
             case 0b0000011:{ // I - type (load)
-                I_type_load(instrucao, immI, rs1, funct3, rd, saida, mem);
+                I_type_load(instrucao, immI, rs1, funct3, rd, saida);
                 break;
             }
             case 0b0100011:{ // S - type (store)
                 int16_t immS = (funct7 << 5) | rd;
                 if (immS & 0x800) immS |= 0xF000;
-                S_type(instrucao, immS, rs1, rs2, funct3, saida, mem);
+                S_type(instrucao, immS, rs1, rs2, funct3, saida);
                 break;
             }
             case 0b0010011:{ // I - type (imm)
-                I_type_imm(instrucao, immI, rs1, funct3, rd, saida, mem);
+                I_type_imm(instrucao, immI, rs1, funct3, rd, saida);
                 break;
             }
             case 0b1100011:{ //B-type
@@ -1077,7 +1079,7 @@ int main (int argc, char *argv[]){
         }
         x[0] = 0;
         pc += 4;
-        timer(mem);
+        timer();
 
         if(flg_isr){
             mem[addr_isr] = RST_ISR;
@@ -1087,7 +1089,7 @@ int main (int argc, char *argv[]){
     float hit_rate_i = (accesses[0] > 0) ? (float)hits[0]/accesses[0] : 0.0;
     float hit_rate_d = (accesses[1] > 0) ? (float)hits[1]/accesses[1] : 0.0;
 
-    fprintf(saida, "#cache_mem:dstats hit=%.4f\n", hit_rate_d);
-    fprintf(saida, "#cache_mem:istats hit=%.4f\n", hit_rate_i);
+    fprintf(saida, "#cache_mem:dstats                     hit=%.4f\n", hit_rate_d);
+    fprintf(saida,  "#cache_mem:istats                     hit=%.4f\n", hit_rate_i);
     fclose(saida);
 }
