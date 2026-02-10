@@ -629,24 +629,31 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
         return;
     }
     uint32_t indx = endereco - offset[cd];
+    int is_ram = (cd == 0);
+    uint32_t word = access_cache(endereco, 1, 'r', 0, saida, mem);
+    uint32_t bit_shift = (endereco & 0x3) * 8;
 
     switch (funct3){
         case 0x0: /*Load Byte (lb) - extensão de sinal*/ {
-            if(endereco == 0x10000000){ // Leitura de dados UART
-                if(terminal_in){
-                    int c = fgetc(terminal_in);
-                    if (c != EOF) mem[indx] = (uint8_t)c; 
-                    else mem[indx] = (uint8_t)0;
+            if(is_ram){
+                x[rd] = (int32_t)(int8_t)(word & 0xFF);
+            }else{
+                 if(endereco == 0x10000000){ // Leitura de dados UART
+                    if(terminal_in){
+                        int c = fgetc(terminal_in);
+                        if (c != EOF) mem[indx] = (uint8_t)c; 
+                        else mem[indx] = (uint8_t)0;
+                    }
+                    mem[ADDRS_LSR - offset[3]] &= ~0x01;
+                    uint8_t isr_atual = mem[addr_isr];
+                    if ((isr_atual & 0x0F) == 0x04) { 
+                        mem[addr_isr] = RST_ISR; 
+                        mip &= ~(1 << 11); 
+                    }
                 }
-                mem[ADDRS_LSR - offset[3]] &= ~0x01;
-                uint8_t isr_atual = mem[addr_isr];
-                if ((isr_atual & 0x0F) == 0x04) { 
-                    mem[addr_isr] = RST_ISR; 
-                    mip &= ~(1 << 11); 
-                }
+                x[rd] = (int32_t)(int8_t)mem[indx]; //mem é unsigned 
             }
             
-            x[rd] = (int32_t)(int8_t)mem[indx]; //mem é unsigned 
             snprintf(left, sizeof left, "0x%08x:lb     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                     left,
@@ -654,8 +661,14 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x1: /*Load Half (lh) - extensão de sinal*/ {
-            int16_t hword = *((int16_t*)&mem[indx]); // n tenho garantia q indx é alinhado
-            x[rd] = (int32_t)hword;
+
+            if (is_ram) {
+                x[rd] = (int32_t)(int16_t)((word >> bit_shift) & 0xFFFF);
+            }else{
+                int16_t hword = *((int16_t*)&mem[indx]); // n tenho garantia q indx é alinhado
+                x[rd] = (int32_t)hword;
+            }
+
             snprintf(left, sizeof left, "0x%08x:lh     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                     left,
@@ -663,13 +676,18 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x2: /*Load Word (lw) - sem extensão*/{
-            if(endereco == 0x0c200004){
-                if(mem[addr_pending] | (1 << 10)){
-                    mem[addr_pending] &=  ~(1 << 10);
-                    *(int32_t*)&mem[indx] = 0x0000000a;
-                }else *(int32_t*)&mem[indx] = 0;
+
+            if (is_ram) {
+                x[rd] = word;
+            } else {
+                if(endereco == 0x0c200004){
+                    if(mem[addr_pending] | (1 << 10)){
+                        mem[addr_pending] &=  ~(1 << 10);
+                        *(int32_t*)&mem[indx] = 0x0000000a;
+                    }else *(int32_t*)&mem[indx] = 0;
+                }
+                x[rd] = *(int32_t*)&mem[indx];
             }
-            x[rd] = *(int32_t*)&mem[indx];
             snprintf(left, sizeof left, "0x%08x:lw     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida,"%-37s %s=mem[0x%08x]=0x%08x\n",
                 left,
@@ -677,7 +695,9 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x4: /*Load Byte (U) (lbu) - extensão por 0*/{
-            x[rd] = (int32_t)mem[indx];
+            if (is_ram) {
+                x[rd] = (int32_t)((word >> bit_shift) & 0xFF);
+            }else x[rd] = (int32_t)mem[indx];
             snprintf(left, sizeof left, "0x%08x:lbu    %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                 left,
@@ -685,8 +705,12 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x5: /*Load Half (U) (lhu) - extensão por 0*/{
-            uint16_t hword = *(uint16_t*)&mem[indx];
-            x[rd] = (int32_t)hword;
+            if (is_ram) {
+                x[rd] = (int32_t)((word >> bit_shift) & 0xFFFF);
+            }else{
+                uint16_t hword = *(uint16_t*)&mem[indx];
+                x[rd] = (int32_t)hword;
+            }
             snprintf(left, sizeof left, "0x%08x:lhu    %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                 left,
