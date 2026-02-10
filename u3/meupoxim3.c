@@ -976,19 +976,19 @@ int main (int argc, char *argv[]){
     while(run){
 
         update_uart_lsr();
+        uint32_t icause;
+        if (check_int(&icause)) {
+            trap_capture(icause, 0, saida);
+            pc += 4;
+            continue;
+        }
+        
         uint32_t instrucao = access_cache(pc, 0, 'r', 0, saida);
 
         if ((pc % 4 != 0) || addrs_range(pc) != 0) {
             trap_capture(1, 0, saida);
             pc += 4; 
             continue; 
-        }
-
-        uint32_t icause;
-        if (check_int(&icause)) {
-            trap_capture(icause, 0, saida);
-            pc += 4;
-            continue;
         }
 
         //uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
