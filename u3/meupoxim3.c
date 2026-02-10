@@ -55,7 +55,7 @@ associatividade grau 2 (8 sets por cache, 2 blocos por set)
 política LRU, write-trough, sem write allocate
 ------------------------------*/
 
-uint32_t hits[2], accesses[2];
+uint32_t hits[2] = {0, 0}, accesses[2] = {0, 0};
 typedef struct {
     uint8_t valid;      
     uint32_t tag;        
@@ -1083,5 +1083,10 @@ int main (int argc, char *argv[]){
             flg_isr = 0;
         }
     }
+    float hit_rate_i = (accesses[0] > 0) ? (float)hits[0]/accesses[0] : 0.0;
+    float hit_rate_d = (accesses[1] > 0) ? (float)hits[1]/accesses[1] : 0.0;
+
+    fprintf(saida, "#cache_mem:dstats hit=%.4f\n", hit_rate_d);
+    fprintf(saida, "#cache_mem:istats hit=%.4f\n", hit_rate_i);
     fclose(saida);
 }
