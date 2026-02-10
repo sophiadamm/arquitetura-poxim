@@ -480,23 +480,33 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         return;
     }
     uint32_t indx = endereco - offset[cd];
+    int is_ram = (cd == 0);
+    uint32_t word_addr = endereco & ~0x3;
+    uint32_t current_val = access_cache(word_addr, 1, 'r', 0, saida, mem);
+    uint32_t bit_shift = (word_addr) * 8;
+    int32_t mask = 0xFF << bit_shift;
 
     switch (funct3){
         case 0x0: /*Store Byte*/{
-            if (endereco == 0x10000000) { // Transmissão de dados UART
-                char byte_out = (char)(dado & 0xFF);
-                if (terminal_out) {
-                    fputc(byte_out, terminal_out);
-                } 
-                mem[addr_lsr] |= RST_LSR; 
-                uint8_t ier = mem[addr_ier];
-                if (ier & 0x02) {
-                    mem[addr_pending] |= (1 << 10);
-                    mip |= (1 << 11);
-                    mem[addr_isr] = 0x02;
-                } 
+            if (is_ram) {
+                uint32_t new_val = (current_val & ~mask) | ((dado & 0xFF) << bit_shift);
+                access_cache(word_addr, 1, 'w', new_val, saida, mem);
+            } else{
+                if (endereco == 0x10000000) { // Transmissão de dados UART
+                    char byte_out = (char)(dado & 0xFF);
+                    if (terminal_out) {
+                        fputc(byte_out, terminal_out);
+                    } 
+                    mem[addr_lsr] |= RST_LSR; 
+                    uint8_t ier = mem[addr_ier];
+                    if (ier & 0x02) {
+                        mem[addr_pending] |= (1 << 10);
+                        mip |= (1 << 11);
+                        mem[addr_isr] = 0x02;
+                    } 
+                }
+                mem[indx] = (uint8_t)(dado & 0xFF);
             }
-            mem[indx] = (uint8_t)(dado & 0xFF);
             snprintf(left, sizeof left, "0x%08x:sb     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%02x\n",
                 left,
@@ -504,7 +514,11 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
             break;
         }
         case 0x1: /*Store Half*/{
-            *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
+            if (is_ram) {
+                uint32_t new_val = (current_val & ~mask) | ((dado & 0xFFFF) << bit_shift);
+                access_cache(word_addr, 1, 'w', new_val, saida, mem);
+            }else *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
+        
             snprintf(left, sizeof left, "0x%08x:sh     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%04x\n",
                 left,
@@ -512,7 +526,9 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
             break;
         }
         case 0x2: /*Store Word */{
-            *(uint32_t*)&mem[indx] = (uint32_t)dado;
+            if(is_ram) access_cache(endereco, 1, 'w', (uint32_t)dado, saida, mem);
+            else *(uint32_t*)&mem[indx] = (uint32_t)dado;
+
             snprintf(left, sizeof left, "0x%08x:sw     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%08x\n",
                 left,
@@ -631,7 +647,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
     uint32_t indx = endereco - offset[cd];
     int is_ram = (cd == 0);
     uint32_t word = access_cache(endereco, 1, 'r', 0, saida, mem);
-    uint32_t bit_shift = (endereco & 0x3) * 8;
+    uint32_t bit_shift = (endereco & 0x3) * 8; // (qual byte dentro da palavra)
 
     switch (funct3){
         case 0x0: /*Load Byte (lb) - extensão de sinal*/ {
