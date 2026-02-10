@@ -988,7 +988,8 @@ int main (int argc, char *argv[]){
             continue;
         }
 
-        uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
+        //uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
+        uint32_t instrucao = access_cache(pc, 0, 'r', 0, saida, mem);
         uint8_t opcode = instrucao & 0b1111111;              // bits 6:0
         uint8_t rd     = (instrucao >> 7) & 0b11111;         // bits 11:7
         uint8_t funct3 = (instrucao >> 12) & 0b111;          // bits 14:12
