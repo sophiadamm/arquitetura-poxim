@@ -67,19 +67,22 @@ typedef struct {
 
 CacheLine cache [2][8][2]; // [tp][set/index][way]
 
-
-uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE* saida) {
+//size (0=Byte, 1=Half, 2=Word)
+uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint8_t size, FILE* saida) {
     accesses[d_i]++;
     // Decodificar endereço 
     uint8_t index = (addr >> 4) & 0x7; // 3 bits de index
     uint32_t tag = addr >> 7; // 25 bits de tag
-    //uint8_t byte_offset = addr & 0b11; // 2 bits de offset
     uint8_t word_offset = (addr & 0b01100) >> 2;
     uint32_t val_ret = value;
 
     uint8_t flg_h = 0, flg_way = 0;
     char type_char = (d_i == 0) ? 'i' : 'd';
+    
+    // Verifica se é RAM válida
+    int is_ram = (addrs_range(addr) == 0);
 
+    // Verifica Hit/Miss
     if(cache[d_i][index][0].valid && cache[d_i][index][0].tag == tag){
         hits[d_i]++;
         flg_h = 1;
@@ -90,14 +93,24 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE
         flg_way = 1;
     }
 
-    if(flg_h){ /*Hit*/
-        if(r_w == 'r') val_ret = cache[d_i][index][flg_way].data[word_offset];
-        else{
-            cache[d_i][index][flg_way].data[word_offset] = value;
-            *(uint32_t*)&mem[addr - offset[addrs_range(addr)]] = value; // write through
-        }
+    if(flg_h){ /* Hit */
         
-        cache[d_i][index][flg_way].lru = accesses[d_i];
+        if (is_ram) {
+            if(r_w == 'r') val_ret = cache[d_i][index][flg_way].data[word_offset];
+            else{
+                uint32_t bit_shift = (addr & 0x3) * 8;
+                int32_t mask = 0xFF << bit_shift;
+                uint32_t current_val = cache[d_i][index][flg_way].data[word_offset];
+                uint32_t new_val = value; 
+                if(size == 0) new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
+                else if(size == 1) new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
+
+                cache[d_i][index][flg_way].data[word_offset] = new_val;
+                uint32_t indx = (addr - offset[addrs_range(addr)]) & ~0x3;
+                *(uint32_t*)&mem[indx] = new_val;
+            }
+            cache[d_i][index][flg_way].lru = accesses[d_i];
+        }
 
         fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%06x,block[%u]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
             type_char, r_w, addr, index, 
@@ -108,7 +121,7 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE
             cache[d_i][index][flg_way].data[2], cache[d_i][index][flg_way].data[3]
         );
 
-    }else{ /*Miss*/
+    } else { /* Miss */
 
         int age0 = cache[d_i][index][0].lru > 0? accesses[d_i] - cache[d_i][index][0].lru : 0;
         int age1 = cache[d_i][index][1].lru > 0? accesses[d_i] - cache[d_i][index][1].lru : 0;
@@ -122,22 +135,41 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, FILE
         );
 
         if(r_w == 'r') {
-            // Cache miss: buscar bloco na memória
-            uint32_t block_addr = addr & ~0b1111; // Endereço do bloco (16 bytes)
-            // Escolhe qual bloco substituir usando LRU
+            // Lógica de substituição LRU
             flg_way = (cache[d_i][index][0].lru <= cache[d_i][index][1].lru) ? 0 : 1;
-            // Atualiza dados na cache
+            
+            // Atualiza Metadados (Valid, Tag, LRU)
             cache[d_i][index][flg_way].valid = 1;
             cache[d_i][index][flg_way].tag = tag;
             cache[d_i][index][flg_way].lru = accesses[d_i];
-            //Traz o bloco da memória principal para a cache
-            uint32_t block_data[4];
-            for (int i = 0; i < 4; i++) {
-                block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
-                cache[d_i][index][flg_way].data[i] = block_data[i];
+
+            if (is_ram) {
+                // Se é RAM, traz o bloco da memória
+                uint32_t block_addr = addr & ~0b1111; 
+                uint32_t block_data[4];
+                for (int i = 0; i < 4; i++) {
+                    block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
+                    cache[d_i][index][flg_way].data[i] = block_data[i];
+                }
+                val_ret = cache[d_i][index][flg_way].data[word_offset];
+            } else {
+                for (int i = 0; i < 4; i++) {
+                    cache[d_i][index][flg_way].data[i] = 0x00000000;
+                }
+                val_ret = 0;
             }
-            val_ret = cache[d_i][index][flg_way].data[word_offset];
-        }else *(uint32_t*)&mem[addr - offset[addrs_range(addr)]] = value; // write through
+        } else if(is_ram) {
+            uint32_t indx = (addr - offset[addrs_range(addr)]) & ~0x3;
+            uint32_t bit_shift = (addr & 0x3) * 8;
+            int32_t mask = 0xFF << bit_shift;
+            uint32_t current_val = *(uint32_t*)&mem[indx];
+            uint32_t new_val = value; 
+            
+            if(size == 0) new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
+            else if(size == 1) new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
+
+            *(uint32_t*)&mem[indx] = new_val;// write through
+        }
     }
 
     return val_ret;
@@ -297,8 +329,8 @@ void CSR_Fluxo(uint32_t instrucao, uint8_t rd, uint8_t funct3, uint8_t rs1, int3
                 break;
             }
             case 0b000000000001: { //ebreak
-                access_cache(pc-4, 0, 'r', 0, saida);
-                access_cache(pc+4, 0, 'r', 0, saida);
+                access_cache(pc-4, 0, 'r', 0, 2, saida);
+                access_cache(pc+4, 0, 'r', 0, 2, saida);
                 fprintf(saida, "0x%08x:ebreak\n", pc);
                 run = 0;
                 break;
@@ -475,22 +507,17 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
 
 
     int cd = addrs_range(endereco);
-    uint32_t indx = endereco - offset[cd];
+    uint32_t indx = endereco - (cd >=0 ? offset[cd] : 0);
     int call_cache = (cd < 0 || cd == 0);
-    uint32_t word_addr = endereco & ~0x3;
-    uint32_t bit_shift = (word_addr) * 8;
-    int32_t mask = 0xFF << bit_shift;
 
     switch (funct3){
         case 0x0: /*Store Byte*/{
             if (call_cache) {
-                 uint32_t current_val = access_cache(word_addr, 1, 'r', 0, saida);
-                 if(cd < 0){
+                access_cache(endereco, 1, 'w', (dado & 0xFF), 0, saida);
+                if(cd < 0){
                     trap_capture( 7, endereco, saida);
                     return;
                 }
-                uint32_t new_val = (current_val & ~mask) | ((dado & 0xFF) << bit_shift);
-                access_cache(word_addr, 1, 'w', new_val, saida);
             } else{
                 if (endereco == 0x10000000) { // Transmissão de dados UART
                     char byte_out = (char)(dado & 0xFF);
@@ -515,13 +542,11 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         }
         case 0x1: /*Store Half*/{
             if (call_cache) {
-                uint32_t current_val = access_cache(word_addr, 1, 'r', 0, saida);
+                access_cache(endereco, 1, 'w', (dado & 0xFFFF), 1, saida);
                  if(cd < 0){
                     trap_capture( 7, endereco, saida);
                     return;
                 }
-                uint32_t new_val = (current_val & ~mask) | ((dado & 0xFFFF) << bit_shift);
-                access_cache(word_addr, 1, 'w', new_val, saida);
             }else *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
         
             snprintf(left, sizeof left, "0x%08x:sh     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
@@ -531,7 +556,7 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
             break;
         }
         case 0x2: /*Store Word */{
-            if(call_cache) access_cache(endereco, 1, 'w', (uint32_t)dado, saida);
+            if(call_cache) access_cache(endereco, 1, 'w', (uint32_t)dado, 2, saida);
             else *(uint32_t*)&mem[indx] = (uint32_t)dado;
 
                 if(cd < 0){
@@ -650,9 +675,10 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
 
     uint32_t endereco = x[rs1] + (int32_t)imm; 
     int cd = addrs_range(endereco);
-    uint32_t indx = endereco - offset[cd];
+    uint32_t indx = endereco - (cd >=0 ? offset[cd] : 0);
     int call_cache = (cd == 0);
-    uint32_t word = access_cache(endereco, 1, 'r', 0, saida);
+    uint32_t word;
+    if(call_cache) word = access_cache(endereco, 1, 'r', 0, 2, saida);
     uint32_t bit_shift = (endereco & 0x3) * 8; // (qual byte dentro da palavra)
 
     if(cd < 0){
@@ -663,7 +689,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
     switch (funct3){
         case 0x0: /*Load Byte (lb) - extensão de sinal*/ {
             if(call_cache){
-                x[rd] = (int32_t)(int8_t)(word & 0xFF);
+                x[rd] = (int32_t)(int8_t)((word >> bit_shift) & 0xFF);
             }else{
                  if(endereco == 0x10000000){ // Leitura de dados UART
                     if(terminal_in){
@@ -1027,6 +1053,11 @@ int main (int argc, char *argv[]){
     while(run){
 
         update_uart_lsr();
+        if ((pc % 4 != 0) || addrs_range(pc) != 0) {
+            trap_capture(1, 0, saida);
+            pc += 4; 
+            continue; 
+        }
         uint32_t icause;
         if (check_int(&icause)) {
             trap_capture(icause, 0, saida);
@@ -1034,13 +1065,7 @@ int main (int argc, char *argv[]){
             continue;
         }
         
-        uint32_t instrucao = access_cache(pc, 0, 'r', 0, saida);
-
-        if ((pc % 4 != 0) || addrs_range(pc) != 0) {
-            trap_capture(1, 0, saida);
-            pc += 4; 
-            continue; 
-        }
+        uint32_t instrucao = access_cache(pc, 0, 'r', 0, 2, saida);
 
         //uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
         uint8_t opcode = instrucao & 0b1111111;              // bits 6:0
