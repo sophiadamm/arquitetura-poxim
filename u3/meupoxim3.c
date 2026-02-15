@@ -68,14 +68,17 @@ typedef struct {
 
 CacheLine cache [2][8][2]; // [tp][set/index][way]
 
+uint32_t min(uint32_t a, uint32_t b){
+    return a < b? a : b;
+}
+
 //size (0=Byte, 1=Half, 2=Word)
-uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint8_t size, FILE* saida) {
+void access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint8_t size, FILE* saida) {
     accesses[d_i]++;
     // Decodificar endereço 
     uint8_t index = (addr >> 4) & 0x7; // 3 bits de index
     uint32_t tag = addr >> 7; // 25 bits de tag
     uint8_t word_offset = (addr & 0b01100) >> 2;
-    uint32_t val_ret = value;
 
     uint8_t flg_h = 0, flg_way = 0;
     char type_char = (d_i == 0) ? 'i' : 'd';
@@ -97,19 +100,66 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
     if(flg_h){ /* Hit */
         
         if (is_ram) {
-            if(r_w == 'r') val_ret = cache[d_i][index][flg_way].data[word_offset];
-            else{
-                /*
-                uint32_t bit_shift = (addr & 0x3) * 8;
-                int32_t mask = 0xFF << bit_shift;
-                uint32_t current_val = cache[d_i][index][flg_way].data[word_offset];
-                uint32_t new_val = value; 
-                if(size == 0) new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
-                else if(size == 1) new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
-
-                cache[d_i][index][flg_way].data[word_offset] = new_val;
-                uint32_t indx = (addr - offset[addrs_range(addr)]) & ~0x3;
-                *(uint32_t*)&mem[indx] = new_val;*/
+            if(r_w == 'w'){
+                uint32_t byte_offset = addr & 0x3;
+                uint32_t bit_shift = byte_offset * 8;
+    
+                if(size == 0) { // Byte
+                    uint32_t mask = 0xFF << bit_shift;
+                    uint32_t current_val = cache[d_i][index][flg_way].data[word_offset];
+                    uint32_t new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
+                    cache[d_i][index][flg_way].data[word_offset] = new_val;
+                    
+                } else if(size == 1) { // Halfword
+                    if(byte_offset == 3) {
+                        // Caso especial: halfword cruza o limite da word
+                        
+                        // Byte 0 do halfword → byte 3 da word atual
+                        uint32_t mask1 = 0xFF << 24;
+                        uint32_t current_val1 = cache[d_i][index][flg_way].data[word_offset];
+                        uint32_t new_val1 = (current_val1 & ~mask1) | ((value & 0xFF) << 24);
+                        cache[d_i][index][flg_way].data[word_offset] = new_val1;
+                        
+                        // Byte 1 do halfword → byte 0 da próxima word
+                        if(word_offset < 3) {
+                            uint32_t mask2 = 0xFF;
+                            uint32_t current_val2 = cache[d_i][index][flg_way].data[word_offset + 1];
+                            uint32_t new_val2 = (current_val2 & ~mask2) | ((value >> 8) & 0xFF);
+                            cache[d_i][index][flg_way].data[word_offset + 1] = new_val2;
+                        }
+                    } else {
+                        // Caso normal: halfword não cruza o limite
+                        uint32_t mask = 0xFFFF << bit_shift;
+                        uint32_t current_val = cache[d_i][index][flg_way].data[word_offset];
+                        uint32_t new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
+                        cache[d_i][index][flg_way].data[word_offset] = new_val;
+                    }
+                    
+                } else if(size == 2) { // Word - pode ser desalinhado!
+                    if(byte_offset == 0) {
+                        // Alinhado - simples
+                        cache[d_i][index][flg_way].data[word_offset] = value;
+                    } else {
+                        // Desalinhado - afeta duas words
+                        uint32_t bytes_in_first_word = 4 - byte_offset;
+                        uint32_t bytes_in_second_word = byte_offset;
+                        
+                        // Primeira word: coloca os bytes de menor ordem
+                        uint32_t mask1 = (1U << (bytes_in_first_word * 8)) - 1;
+                        uint32_t mask1_shifted = mask1 << bit_shift;
+                        uint32_t current_val1 = cache[d_i][index][flg_way].data[word_offset];
+                        uint32_t new_val1 = (current_val1 & ~mask1_shifted) | ((value & mask1) << bit_shift);
+                        cache[d_i][index][flg_way].data[word_offset] = new_val1;
+                        
+                        // Segunda word (se existir no bloco)
+                        if(word_offset < 3) {
+                            uint32_t mask2 = (1U << (bytes_in_second_word * 8)) - 1;
+                            uint32_t current_val2 = cache[d_i][index][flg_way].data[word_offset + 1];
+                            uint32_t new_val2 = (current_val2 & ~mask2) | ((value >> (bytes_in_first_word * 8)) & mask2);
+                            cache[d_i][index][flg_way].data[word_offset + 1] = new_val2;
+                        }
+                    }
+                }
             }
             cache[d_i][index][flg_way].time = accesses[d_i];
             cache[d_i][index][flg_way].age = 0;
@@ -126,8 +176,8 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
 
     } else { /* Miss */
 
-        cache[d_i][index][0].age  = cache[d_i][index][0].time > 0? accesses[d_i] - cache[d_i][index][0].time : 0;
-        cache[d_i][index][1].age  = cache[d_i][index][1].time > 0? accesses[d_i] - cache[d_i][index][1].time : 0;
+        cache[d_i][index][0].age  = cache[d_i][index][0].time > 0? min(accesses[d_i] - cache[d_i][index][0].time, 255): 0;
+        cache[d_i][index][1].age  = cache[d_i][index][1].time > 0? min(accesses[d_i] - cache[d_i][index][1].time, 255) : 0;
 
         fprintf(saida, "#cache_mem:%c%cm    0x%08x          line=%u,valid={%d,%d},age={%u,%u},id={0x%07x,0x%07x}\n",
             type_char, r_w, addr,
@@ -137,11 +187,13 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
             cache[d_i][index][0].tag,   cache[d_i][index][1].tag
         );
 
-        if(!is_ram) return val_ret;
+        if(!is_ram) return;
 
         if(r_w == 'r') {
             // Lógica de substituição LRU
-            flg_way = (cache[d_i][index][0].age >= cache[d_i][index][1].age) ? 0 : 1;
+            if(cache[d_i][index][0].age == 0) flg_way = 0;
+            else if(cache[d_i][index][1].age == 0) flg_way = 1;
+            else flg_way = (cache[d_i][index][0].age >= cache[d_i][index][1].age) ? 0 : 1;
             
             // Atualiza Metadados (Valid, Tag, LRU)
             cache[d_i][index][flg_way].valid = 1;
@@ -154,24 +206,9 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
                 block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
                 cache[d_i][index][flg_way].data[i] = block_data[i];
             }
-            val_ret = cache[d_i][index][flg_way].data[word_offset];
-        } else{
-            /*
-            uint32_t indx = (addr - offset[addrs_range(addr)]) & ~0x3;
-            uint32_t bit_shift = (addr & 0x3) * 8;
-            int32_t mask = 0xFF << bit_shift;
-            uint32_t current_val = *(uint32_t*)&mem[indx];
-            uint32_t new_val = value; 
-            
-            if(size == 0) new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
-            else if(size == 1) new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
-
-            *(uint32_t*)&mem[indx] = new_val;// write through
-            */
         }
     }
 
-    return val_ret;
 }
 
 
@@ -676,9 +713,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
     uint32_t endereco = x[rs1] + (int32_t)imm; 
     int cd = addrs_range(endereco);
     int call_cache = (cd == 0 || cd < 0);
-    uint32_t word;
-    if(call_cache) word = access_cache(endereco, 1, 'r', 0, 2, saida);
-    uint32_t bit_shift = (endereco & 0x3) * 8; // (qual byte dentro da palavra)
+    if(call_cache) access_cache(endereco, 1, 'r', 0, 2, saida);
 
     if(cd < 0){
         trap_capture(5, endereco, saida);
@@ -1049,7 +1084,7 @@ int main (int argc, char *argv[]){
             continue;
         }
 
-        uint32_t instrucao = access_cache(pc, 0, 'r', 0, 2, saida);
+        access_cache(pc, 0, 'r', 0, 2, saida);
 
         if ((pc % 4 != 0) || addrs_range(pc) != 0) {
             trap_capture(1, 0, saida);
@@ -1057,7 +1092,7 @@ int main (int argc, char *argv[]){
             continue; 
         }
 
-        //uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
+        uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
         uint8_t opcode = instrucao & 0b1111111;              // bits 6:0
         uint8_t rd     = (instrucao >> 7) & 0b11111;         // bits 11:7
         uint8_t funct3 = (instrucao >> 12) & 0b111;          // bits 14:12
