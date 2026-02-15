@@ -61,7 +61,8 @@ uint32_t hits[2] = {0, 0}, accesses[2] = {0, 0};
 typedef struct {
     uint8_t valid;      
     uint32_t tag;        
-    uint8_t lru;        
+    uint8_t age;        
+    uint32_t time;        
     uint32_t data[4];
 } CacheLine;
 
@@ -98,6 +99,7 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
         if (is_ram) {
             if(r_w == 'r') val_ret = cache[d_i][index][flg_way].data[word_offset];
             else{
+                /*
                 uint32_t bit_shift = (addr & 0x3) * 8;
                 int32_t mask = 0xFF << bit_shift;
                 uint32_t current_val = cache[d_i][index][flg_way].data[word_offset];
@@ -107,9 +109,10 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
 
                 cache[d_i][index][flg_way].data[word_offset] = new_val;
                 uint32_t indx = (addr - offset[addrs_range(addr)]) & ~0x3;
-                *(uint32_t*)&mem[indx] = new_val;
+                *(uint32_t*)&mem[indx] = new_val;*/
             }
-            cache[d_i][index][flg_way].lru = accesses[d_i];
+            cache[d_i][index][flg_way].time = accesses[d_i];
+            cache[d_i][index][flg_way].age = 0;
         }
 
         fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%07x,block[%u]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
@@ -123,14 +126,14 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
 
     } else { /* Miss */
 
-        int age0 = cache[d_i][index][0].lru > 0? accesses[d_i] - cache[d_i][index][0].lru : 0;
-        int age1 = cache[d_i][index][1].lru > 0? accesses[d_i] - cache[d_i][index][1].lru : 0;
+        cache[d_i][index][0].age  = cache[d_i][index][0].time > 0? accesses[d_i] - cache[d_i][index][0].time : 0;
+        cache[d_i][index][1].age  = cache[d_i][index][1].time > 0? accesses[d_i] - cache[d_i][index][1].time : 0;
 
         fprintf(saida, "#cache_mem:%c%cm    0x%08x          line=%u,valid={%d,%d},age={%u,%u},id={0x%07x,0x%07x}\n",
             type_char, r_w, addr,
             index,
             cache[d_i][index][0].valid, cache[d_i][index][1].valid,
-            age0, age1,
+            cache[d_i][index][0].age, cache[d_i][index][1].age,
             cache[d_i][index][0].tag,   cache[d_i][index][1].tag
         );
 
@@ -138,12 +141,12 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
 
         if(r_w == 'r') {
             // Lógica de substituição LRU
-            flg_way = (cache[d_i][index][0].lru <= cache[d_i][index][1].lru) ? 0 : 1;
+            flg_way = (cache[d_i][index][0].age >= cache[d_i][index][1].age) ? 0 : 1;
             
             // Atualiza Metadados (Valid, Tag, LRU)
             cache[d_i][index][flg_way].valid = 1;
             cache[d_i][index][flg_way].tag = tag;
-            cache[d_i][index][flg_way].lru = accesses[d_i];
+            cache[d_i][index][flg_way].time = accesses[d_i];
 
             uint32_t block_addr = addr & ~0b1111; 
             uint32_t block_data[4];
@@ -153,6 +156,7 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
             }
             val_ret = cache[d_i][index][flg_way].data[word_offset];
         } else{
+            /*
             uint32_t indx = (addr - offset[addrs_range(addr)]) & ~0x3;
             uint32_t bit_shift = (addr & 0x3) * 8;
             int32_t mask = 0xFF << bit_shift;
@@ -163,6 +167,7 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
             else if(size == 1) new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
 
             *(uint32_t*)&mem[indx] = new_val;// write through
+            */
         }
     }
 
@@ -508,11 +513,11 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         case 0x0: /*Store Byte*/{
             if (call_cache) {
                 access_cache(endereco, 1, 'w', (dado & 0xFF), 0, saida);
-            } else{
                 if(cd < 0){
                     trap_capture( 7, endereco, saida);
                     return;
                 }
+            } /*else{*/
                 if (endereco == 0x10000000) { // Transmissão de dados UART
                     char byte_out = (char)(dado & 0xFF);
                     if (terminal_out) {
@@ -527,7 +532,7 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
                     } 
                 }
                 mem[indx] = (uint8_t)(dado & 0xFF);
-            }
+            //}
             snprintf(left, sizeof left, "0x%08x:sb     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%02x\n",
                 left,
@@ -541,7 +546,7 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
                     trap_capture( 7, endereco, saida);
                     return;
                 }
-            }else *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
+            }/*else*/ *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
         
             snprintf(left, sizeof left, "0x%08x:sh     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%04x\n",
@@ -557,7 +562,7 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
                     return;
                 }
             }
-            else *(uint32_t*)&mem[indx] = (uint32_t)dado;
+            /*else*/ *(uint32_t*)&mem[indx] = (uint32_t)dado;
 
             snprintf(left, sizeof left, "0x%08x:sw     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%08x\n",
@@ -680,28 +685,23 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
         return;
     }
     uint32_t indx = endereco - offset[cd];
-
     switch (funct3){
         case 0x0: /*Load Byte (lb) - extensão de sinal*/ {
-            if(call_cache){
-                x[rd] = (int32_t)(int8_t)((word >> bit_shift) & 0xFF);
-            }else{
-                 if(endereco == 0x10000000){ // Leitura de dados UART
-                    if(terminal_in){
-                        int c = fgetc(terminal_in);
-                        if (c != EOF) mem[indx] = (uint8_t)c; 
-                        else mem[indx] = (uint8_t)0;
-                    }
-                    mem[ADDRS_LSR - offset[3]] &= ~0x01;
-                    uint8_t isr_atual = mem[addr_isr];
-                    if ((isr_atual & 0x0F) == 0x04) { 
-                        mem[addr_isr] = RST_ISR; 
-                        mip &= ~(1 << 11); 
-                    }
+            if(endereco == 0x10000000){ // Leitura de dados UART
+                if(terminal_in){
+                    int c = fgetc(terminal_in);
+                    if (c != EOF) mem[indx] = (uint8_t)c; 
+                    else mem[indx] = (uint8_t)0;
                 }
-                x[rd] = (int32_t)(int8_t)mem[indx]; //mem é unsigned 
+                mem[ADDRS_LSR - offset[3]] &= ~0x01;
+                uint8_t isr_atual = mem[addr_isr];
+                if ((isr_atual & 0x0F) == 0x04) { 
+                    mem[addr_isr] = RST_ISR; 
+                    mip &= ~(1 << 11); 
+                }
             }
             
+            x[rd] = (int32_t)(int8_t)mem[indx]; //mem é unsigned 
             snprintf(left, sizeof left, "0x%08x:lb     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                     left,
@@ -709,14 +709,8 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x1: /*Load Half (lh) - extensão de sinal*/ {
-
-            if (call_cache) {
-                x[rd] = (int32_t)(int16_t)((word >> bit_shift) & 0xFFFF);
-            }else{
-                int16_t hword = *((int16_t*)&mem[indx]); // n tenho garantia q indx é alinhado
-                x[rd] = (int32_t)hword;
-            }
-
+            int16_t hword = *((int16_t*)&mem[indx]); // n tenho garantia q indx é alinhado
+            x[rd] = (int32_t)hword;
             snprintf(left, sizeof left, "0x%08x:lh     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                     left,
@@ -724,18 +718,13 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x2: /*Load Word (lw) - sem extensão*/{
-
-            if (call_cache) {
-                x[rd] = word;
-            } else {
-                if(endereco == 0x0c200004){
-                    if(mem[addr_pending] | (1 << 10)){
-                        mem[addr_pending] &=  ~(1 << 10);
-                        *(int32_t*)&mem[indx] = 0x0000000a;
-                    }else *(int32_t*)&mem[indx] = 0;
-                }
-                x[rd] = *(int32_t*)&mem[indx];
+            if(endereco == 0x0c200004){
+                if(mem[addr_pending] | (1 << 10)){
+                    mem[addr_pending] &=  ~(1 << 10);
+                    *(int32_t*)&mem[indx] = 0x0000000a;
+                }else *(int32_t*)&mem[indx] = 0;
             }
+            x[rd] = *(int32_t*)&mem[indx];
             snprintf(left, sizeof left, "0x%08x:lw     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida,"%-37s %s=mem[0x%08x]=0x%08x\n",
                 left,
@@ -743,9 +732,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x4: /*Load Byte (U) (lbu) - extensão por 0*/{
-            if (call_cache) {
-                x[rd] = (int32_t)((word >> bit_shift) & 0xFF);
-            }else x[rd] = (int32_t)mem[indx];
+            x[rd] = (int32_t)mem[indx];
             snprintf(left, sizeof left, "0x%08x:lbu    %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                 left,
@@ -753,12 +740,8 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x5: /*Load Half (U) (lhu) - extensão por 0*/{
-            if (call_cache) {
-                x[rd] = (int32_t)((word >> bit_shift) & 0xFFFF);
-            }else{
-                uint16_t hword = *(uint16_t*)&mem[indx];
-                x[rd] = (int32_t)hword;
-            }
+            uint16_t hword = *(uint16_t*)&mem[indx];
+            x[rd] = (int32_t)hword;
             snprintf(left, sizeof left, "0x%08x:lhu    %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                 left,
@@ -768,6 +751,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
         default:
             trap_capture(2, instrucao, saida);
     }
+
 
 }
 
@@ -1047,12 +1031,19 @@ int main (int argc, char *argv[]){
 
     int count = 0;
 
-    while(run && ++count < 50000){
+    while(run){
+
+        if(++count > 500000){
+            printf("Count excedeu 500000 instruções");
+            break;
+        }
+
+        uint8_t gambiarra_flg = ((pc % 4 != 0) || addrs_range(pc) != 0);
 
         update_uart_lsr();
         
         uint32_t icause;
-        if (check_int(&icause)) {
+        if (!gambiarra_flg && check_int(&icause)) {
             trap_capture(icause, 0, saida);
             pc += 4;
             continue;
