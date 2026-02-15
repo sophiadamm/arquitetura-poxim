@@ -112,7 +112,7 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
             cache[d_i][index][flg_way].lru = accesses[d_i];
         }
 
-        fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%06x,block[%u]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
+        fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%07x,block[%u]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
             type_char, r_w, addr, index, 
             0, 
             tag,  
@@ -126,13 +126,15 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
         int age0 = cache[d_i][index][0].lru > 0? accesses[d_i] - cache[d_i][index][0].lru : 0;
         int age1 = cache[d_i][index][1].lru > 0? accesses[d_i] - cache[d_i][index][1].lru : 0;
 
-        fprintf(saida, "#cache_mem:%c%cm    0x%08x          line=%u,valid={%d,%d},age={%u,%u},id={0x%06x,0x%06x}\n",
+        fprintf(saida, "#cache_mem:%c%cm    0x%08x          line=%u,valid={%d,%d},age={%u,%u},id={0x%07x,0x%07x}\n",
             type_char, r_w, addr,
             index,
             cache[d_i][index][0].valid, cache[d_i][index][1].valid,
             age0, age1,
             cache[d_i][index][0].tag,   cache[d_i][index][1].tag
         );
+
+        if(!is_ram) return val_ret;
 
         if(r_w == 'r') {
             // Lógica de substituição LRU
@@ -143,22 +145,14 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
             cache[d_i][index][flg_way].tag = tag;
             cache[d_i][index][flg_way].lru = accesses[d_i];
 
-            if (is_ram) {
-                // Se é RAM, traz o bloco da memória
-                uint32_t block_addr = addr & ~0b1111; 
-                uint32_t block_data[4];
-                for (int i = 0; i < 4; i++) {
-                    block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
-                    cache[d_i][index][flg_way].data[i] = block_data[i];
-                }
-                val_ret = cache[d_i][index][flg_way].data[word_offset];
-            } else {
-                for (int i = 0; i < 4; i++) {
-                    cache[d_i][index][flg_way].data[i] = 0x00000000;
-                }
-                val_ret = 0;
+            uint32_t block_addr = addr & ~0b1111; 
+            uint32_t block_data[4];
+            for (int i = 0; i < 4; i++) {
+                block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
+                cache[d_i][index][flg_way].data[i] = block_data[i];
             }
-        } else if(is_ram) {
+            val_ret = cache[d_i][index][flg_way].data[word_offset];
+        } else{
             uint32_t indx = (addr - offset[addrs_range(addr)]) & ~0x3;
             uint32_t bit_shift = (addr & 0x3) * 8;
             int32_t mask = 0xFF << bit_shift;
@@ -507,18 +501,18 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
 
 
     int cd = addrs_range(endereco);
-    if(cd < 0){
-        trap_capture( 7, endereco, saida);
-        return;
-    }
     uint32_t indx = endereco - offset[cd];
-    int call_cache = (cd == 0);
+    int call_cache = (cd == 0 || cd < 0);
 
     switch (funct3){
         case 0x0: /*Store Byte*/{
             if (call_cache) {
                 access_cache(endereco, 1, 'w', (dado & 0xFF), 0, saida);
             } else{
+                if(cd < 0){
+                    trap_capture( 7, endereco, saida);
+                    return;
+                }
                 if (endereco == 0x10000000) { // Transmissão de dados UART
                     char byte_out = (char)(dado & 0xFF);
                     if (terminal_out) {
@@ -543,6 +537,10 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         case 0x1: /*Store Half*/{
             if (call_cache) {
                 access_cache(endereco, 1, 'w', (dado & 0xFFFF), 1, saida);
+                if(cd < 0){
+                    trap_capture( 7, endereco, saida);
+                    return;
+                }
             }else *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
         
             snprintf(left, sizeof left, "0x%08x:sh     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
@@ -552,7 +550,13 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
             break;
         }
         case 0x2: /*Store Word */{
-            if(call_cache) access_cache(endereco, 1, 'w', (uint32_t)dado, 2, saida);
+            if(call_cache){
+                access_cache(endereco, 1, 'w', (uint32_t)dado, 2, saida);
+                if(cd < 0){
+                    trap_capture( 7, endereco, saida);
+                    return;
+                }
+            }
             else *(uint32_t*)&mem[indx] = (uint32_t)dado;
 
             snprintf(left, sizeof left, "0x%08x:sw     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
@@ -666,15 +670,16 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
 
     uint32_t endereco = x[rs1] + (int32_t)imm; 
     int cd = addrs_range(endereco);
+    int call_cache = (cd == 0 || cd < 0);
+    uint32_t word;
+    if(call_cache) word = access_cache(endereco, 1, 'r', 0, 2, saida);
+    uint32_t bit_shift = (endereco & 0x3) * 8; // (qual byte dentro da palavra)
+
     if(cd < 0){
         trap_capture(5, endereco, saida);
         return;
     }
     uint32_t indx = endereco - offset[cd];
-    int call_cache = (cd == 0);
-    uint32_t word;
-    if(call_cache) word = access_cache(endereco, 1, 'r', 0, 2, saida);
-    uint32_t bit_shift = (endereco & 0x3) * 8; // (qual byte dentro da palavra)
 
     switch (funct3){
         case 0x0: /*Load Byte (lb) - extensão de sinal*/ {
@@ -1042,7 +1047,7 @@ int main (int argc, char *argv[]){
 
     int count = 0;
 
-    while(run && ++count < 600){
+    while(run && ++count < 50000){
 
         update_uart_lsr();
         
