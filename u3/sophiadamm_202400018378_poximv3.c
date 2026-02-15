@@ -1042,7 +1042,7 @@ int main (int argc, char *argv[]){
 
     int count = 0;
 
-    while(run && ++count < 600000){
+    while(run && ++count < 50000){
 
         update_uart_lsr();
         
