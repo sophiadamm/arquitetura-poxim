@@ -103,60 +103,59 @@ void access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint8_t 
             if(r_w == 'w'){
                 uint32_t byte_offset = addr & 0x3;
                 uint32_t bit_shift = byte_offset * 8;
+                uint32_t mask, current_val, new_val;
     
                 if(size == 0) { // Byte
-                    uint32_t mask = 0xFF << bit_shift;
-                    uint32_t current_val = cache[d_i][index][flg_way].data[word_offset];
-                    uint32_t new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
+                    mask = 0xFF << bit_shift;
+                    current_val = cache[d_i][index][flg_way].data[word_offset];
+                    new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
                     cache[d_i][index][flg_way].data[word_offset] = new_val;
                     
                 } else if(size == 1) { // Halfword
                     if(byte_offset == 3) {
-                        // Caso especial: halfword cruza o limite da word
+                        // halfword cruza o limite da word
                         
                         // Byte 0 do halfword → byte 3 da word atual
-                        uint32_t mask1 = 0xFF << 24;
-                        uint32_t current_val1 = cache[d_i][index][flg_way].data[word_offset];
-                        uint32_t new_val1 = (current_val1 & ~mask1) | ((value & 0xFF) << 24);
-                        cache[d_i][index][flg_way].data[word_offset] = new_val1;
+                        mask = 0xFF << 24;
+                        current_val = cache[d_i][index][flg_way].data[word_offset];
+                        new_val = (current_val & ~mask) | ((value & 0xFF) << 24);
+                        cache[d_i][index][flg_way].data[word_offset] = new_val;
                         
                         // Byte 1 do halfword → byte 0 da próxima word
                         if(word_offset < 3) {
-                            uint32_t mask2 = 0xFF;
-                            uint32_t current_val2 = cache[d_i][index][flg_way].data[word_offset + 1];
-                            uint32_t new_val2 = (current_val2 & ~mask2) | ((value >> 8) & 0xFF);
-                            cache[d_i][index][flg_way].data[word_offset + 1] = new_val2;
+                            mask = 0xFF;
+                            current_val = cache[d_i][index][flg_way].data[word_offset + 1];
+                            new_val = (current_val & ~mask) | ((value >> 8) & 0xFF);
+                            cache[d_i][index][flg_way].data[word_offset + 1] = new_val;
                         }
-                    } else {
-                        // Caso normal: halfword não cruza o limite
-                        uint32_t mask = 0xFFFF << bit_shift;
-                        uint32_t current_val = cache[d_i][index][flg_way].data[word_offset];
-                        uint32_t new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
+                    } else { // halfword não cruza o limite
+                        mask = 0xFFFF << bit_shift;
+                        current_val = cache[d_i][index][flg_way].data[word_offset];
+                        new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
                         cache[d_i][index][flg_way].data[word_offset] = new_val;
                     }
                     
-                } else if(size == 2) { // Word - pode ser desalinhado!
+                } else if(size == 2) { // Word
                     if(byte_offset == 0) {
-                        // Alinhado - simples
+                        // Alinhado
                         cache[d_i][index][flg_way].data[word_offset] = value;
                     } else {
                         // Desalinhado - afeta duas words
-                        uint32_t bytes_in_first_word = 4 - byte_offset;
-                        uint32_t bytes_in_second_word = byte_offset;
+                        uint32_t bytes1 = 4 - byte_offset; // qtd de bytes na primeira word
                         
                         // Primeira word: coloca os bytes de menor ordem
-                        uint32_t mask1 = (1U << (bytes_in_first_word * 8)) - 1;
-                        uint32_t mask1_shifted = mask1 << bit_shift;
-                        uint32_t current_val1 = cache[d_i][index][flg_way].data[word_offset];
-                        uint32_t new_val1 = (current_val1 & ~mask1_shifted) | ((value & mask1) << bit_shift);
-                        cache[d_i][index][flg_way].data[word_offset] = new_val1;
+                        mask = (1U << (bytes1 * 8)) - 1;
+                        uint32_t mask_shifted = mask << bit_shift;
+                        current_val = cache[d_i][index][flg_way].data[word_offset];
+                        new_val = (current_val & ~mask_shifted) | ((value & mask) << bit_shift);
+                        cache[d_i][index][flg_way].data[word_offset] = new_val;
                         
                         // Segunda word (se existir no bloco)
                         if(word_offset < 3) {
-                            uint32_t mask2 = (1U << (bytes_in_second_word * 8)) - 1;
-                            uint32_t current_val2 = cache[d_i][index][flg_way].data[word_offset + 1];
-                            uint32_t new_val2 = (current_val2 & ~mask2) | ((value >> (bytes_in_first_word * 8)) & mask2);
-                            cache[d_i][index][flg_way].data[word_offset + 1] = new_val2;
+                            mask = (1U << (byte_offset * 8)) - 1;
+                            current_val = cache[d_i][index][flg_way].data[word_offset + 1];
+                            new_val = (current_val & ~mask) | ((value >> (bytes1 * 8)) & mask);
+                            cache[d_i][index][flg_way].data[word_offset + 1] = new_val;
                         }
                     }
                 }
@@ -554,22 +553,22 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
                     trap_capture( 7, endereco, saida);
                     return;
                 }
-            } /*else{*/
-                if (endereco == 0x10000000) { // Transmissão de dados UART
-                    char byte_out = (char)(dado & 0xFF);
-                    if (terminal_out) {
-                        fputc(byte_out, terminal_out);
-                    } 
-                    mem[addr_lsr] |= RST_LSR; 
-                    uint8_t ier = mem[addr_ier];
-                    if (ier & 0x02) {
-                        mem[addr_pending] |= (1 << 10);
-                        mip |= (1 << 11);
-                        mem[addr_isr] = 0x02;
-                    } 
-                }
-                mem[indx] = (uint8_t)(dado & 0xFF);
-            //}
+            } 
+            if (endereco == 0x10000000) { // Transmissão de dados UART
+                char byte_out = (char)(dado & 0xFF);
+                if (terminal_out) {
+                    fputc(byte_out, terminal_out);
+                } 
+                mem[addr_lsr] |= RST_LSR; 
+                uint8_t ier = mem[addr_ier];
+                if (ier & 0x02) {
+                    mem[addr_pending] |= (1 << 10);
+                    mip |= (1 << 11);
+                    mem[addr_isr] = 0x02;
+                } 
+            }
+            mem[indx] = (uint8_t)(dado & 0xFF);
+
             snprintf(left, sizeof left, "0x%08x:sb     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%02x\n",
                 left,
@@ -583,7 +582,8 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
                     trap_capture( 7, endereco, saida);
                     return;
                 }
-            }/*else*/ *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
+            }
+            *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
         
             snprintf(left, sizeof left, "0x%08x:sh     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%04x\n",
@@ -599,7 +599,7 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
                     return;
                 }
             }
-            /*else*/ *(uint32_t*)&mem[indx] = (uint32_t)dado;
+            *(uint32_t*)&mem[indx] = (uint32_t)dado;
 
             snprintf(left, sizeof left, "0x%08x:sw     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%08x\n",
@@ -712,8 +712,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
 
     uint32_t endereco = x[rs1] + (int32_t)imm; 
     int cd = addrs_range(endereco);
-    int call_cache = (cd == 0 || cd < 0);
-    if(call_cache) access_cache(endereco, 1, 'r', 0, 2, saida);
+    if(cd == 0 || cd < 0) access_cache(endereco, 1, 'r', 0, 2, saida);
 
     if(cd < 0){
         trap_capture(5, endereco, saida);
@@ -1068,17 +1067,10 @@ int main (int argc, char *argv[]){
 
     while(run){
 
-        if(++count > 500000){
-            printf("Count excedeu 500000 instruções");
-            break;
-        }
-
-        uint8_t gambiarra_flg = ((pc % 4 != 0) || addrs_range(pc) != 0);
-
         update_uart_lsr();
         
         uint32_t icause;
-        if (!gambiarra_flg && check_int(&icause)) {
+        if (check_int(&icause)) {
             trap_capture(icause, 0, saida);
             pc += 4;
             continue;

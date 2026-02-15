@@ -61,20 +61,24 @@ uint32_t hits[2] = {0, 0}, accesses[2] = {0, 0};
 typedef struct {
     uint8_t valid;      
     uint32_t tag;        
-    uint8_t lru;        
+    uint8_t age;        
+    uint32_t time;        
     uint32_t data[4];
 } CacheLine;
 
 CacheLine cache [2][8][2]; // [tp][set/index][way]
 
+uint32_t min(uint32_t a, uint32_t b){
+    return a < b? a : b;
+}
+
 //size (0=Byte, 1=Half, 2=Word)
-uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint8_t size, FILE* saida) {
+void access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint8_t size, FILE* saida) {
     accesses[d_i]++;
     // Decodificar endereço 
     uint8_t index = (addr >> 4) & 0x7; // 3 bits de index
     uint32_t tag = addr >> 7; // 25 bits de tag
     uint8_t word_offset = (addr & 0b01100) >> 2;
-    uint32_t val_ret = value;
 
     uint8_t flg_h = 0, flg_way = 0;
     char type_char = (d_i == 0) ? 'i' : 'd';
@@ -96,23 +100,71 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
     if(flg_h){ /* Hit */
         
         if (is_ram) {
-            if(r_w == 'r') val_ret = cache[d_i][index][flg_way].data[word_offset];
-            else{
-                uint32_t bit_shift = (addr & 0x3) * 8;
-                int32_t mask = 0xFF << bit_shift;
-                uint32_t current_val = cache[d_i][index][flg_way].data[word_offset];
-                uint32_t new_val = value; 
-                if(size == 0) new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
-                else if(size == 1) new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
-
-                cache[d_i][index][flg_way].data[word_offset] = new_val;
-                uint32_t indx = (addr - offset[addrs_range(addr)]) & ~0x3;
-                *(uint32_t*)&mem[indx] = new_val;
+            if(r_w == 'w'){
+                uint32_t byte_offset = addr & 0x3;
+                uint32_t bit_shift = byte_offset * 8;
+                uint32_t mask, current_val, new_val;
+    
+                if(size == 0) { // Byte
+                    mask = 0xFF << bit_shift;
+                    current_val = cache[d_i][index][flg_way].data[word_offset];
+                    new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
+                    cache[d_i][index][flg_way].data[word_offset] = new_val;
+                    
+                } else if(size == 1) { // Halfword
+                    if(byte_offset == 3) {
+                        // halfword cruza o limite da word
+                        
+                        // Byte 0 do halfword → byte 3 da word atual
+                        mask = 0xFF << 24;
+                        current_val = cache[d_i][index][flg_way].data[word_offset];
+                        new_val = (current_val & ~mask) | ((value & 0xFF) << 24);
+                        cache[d_i][index][flg_way].data[word_offset] = new_val;
+                        
+                        // Byte 1 do halfword → byte 0 da próxima word
+                        if(word_offset < 3) {
+                            mask = 0xFF;
+                            current_val = cache[d_i][index][flg_way].data[word_offset + 1];
+                            new_val = (current_val & ~mask) | ((value >> 8) & 0xFF);
+                            cache[d_i][index][flg_way].data[word_offset + 1] = new_val;
+                        }
+                    } else { // halfword não cruza o limite
+                        mask = 0xFFFF << bit_shift;
+                        current_val = cache[d_i][index][flg_way].data[word_offset];
+                        new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
+                        cache[d_i][index][flg_way].data[word_offset] = new_val;
+                    }
+                    
+                } else if(size == 2) { // Word
+                    if(byte_offset == 0) {
+                        // Alinhado
+                        cache[d_i][index][flg_way].data[word_offset] = value;
+                    } else {
+                        // Desalinhado - afeta duas words
+                        uint32_t bytes1 = 4 - byte_offset; // qtd de bytes na primeira word
+                        
+                        // Primeira word: coloca os bytes de menor ordem
+                        mask = (1U << (bytes1 * 8)) - 1;
+                        uint32_t mask_shifted = mask << bit_shift;
+                        current_val = cache[d_i][index][flg_way].data[word_offset];
+                        new_val = (current_val & ~mask_shifted) | ((value & mask) << bit_shift);
+                        cache[d_i][index][flg_way].data[word_offset] = new_val;
+                        
+                        // Segunda word (se existir no bloco)
+                        if(word_offset < 3) {
+                            mask = (1U << (byte_offset * 8)) - 1;
+                            current_val = cache[d_i][index][flg_way].data[word_offset + 1];
+                            new_val = (current_val & ~mask) | ((value >> (bytes1 * 8)) & mask);
+                            cache[d_i][index][flg_way].data[word_offset + 1] = new_val;
+                        }
+                    }
+                }
             }
-            cache[d_i][index][flg_way].lru = accesses[d_i];
+            cache[d_i][index][flg_way].time = accesses[d_i];
+            cache[d_i][index][flg_way].age = 0;
         }
 
-        fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%06x,block[%u]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
+        fprintf(saida, "#cache_mem:%c%ch    0x%08x          line=%u,age=%d,id=0x%07x,block[%u]={0x%08x,0x%08x,0x%08x,0x%08x}\n",
             type_char, r_w, addr, index, 
             0, 
             tag,  
@@ -123,56 +175,39 @@ uint32_t access_cache(uint32_t addr, uint8_t d_i, char r_w, uint32_t value, uint
 
     } else { /* Miss */
 
-        int age0 = cache[d_i][index][0].lru > 0? accesses[d_i] - cache[d_i][index][0].lru : 0;
-        int age1 = cache[d_i][index][1].lru > 0? accesses[d_i] - cache[d_i][index][1].lru : 0;
+        cache[d_i][index][0].age  = cache[d_i][index][0].time > 0? min(accesses[d_i] - cache[d_i][index][0].time, 255): 0;
+        cache[d_i][index][1].age  = cache[d_i][index][1].time > 0? min(accesses[d_i] - cache[d_i][index][1].time, 255) : 0;
 
-        fprintf(saida, "#cache_mem:%c%cm    0x%08x          line=%u,valid={%d,%d},age={%u,%u},id={0x%06x,0x%06x}\n",
+        fprintf(saida, "#cache_mem:%c%cm    0x%08x          line=%u,valid={%d,%d},age={%u,%u},id={0x%07x,0x%07x}\n",
             type_char, r_w, addr,
             index,
             cache[d_i][index][0].valid, cache[d_i][index][1].valid,
-            age0, age1,
+            cache[d_i][index][0].age, cache[d_i][index][1].age,
             cache[d_i][index][0].tag,   cache[d_i][index][1].tag
         );
 
+        if(!is_ram) return;
+
         if(r_w == 'r') {
             // Lógica de substituição LRU
-            flg_way = (cache[d_i][index][0].lru <= cache[d_i][index][1].lru) ? 0 : 1;
+            if(cache[d_i][index][0].age == 0) flg_way = 0;
+            else if(cache[d_i][index][1].age == 0) flg_way = 1;
+            else flg_way = (cache[d_i][index][0].age >= cache[d_i][index][1].age) ? 0 : 1;
             
             // Atualiza Metadados (Valid, Tag, LRU)
             cache[d_i][index][flg_way].valid = 1;
             cache[d_i][index][flg_way].tag = tag;
-            cache[d_i][index][flg_way].lru = accesses[d_i];
+            cache[d_i][index][flg_way].time = accesses[d_i];
 
-            if (is_ram) {
-                // Se é RAM, traz o bloco da memória
-                uint32_t block_addr = addr & ~0b1111; 
-                uint32_t block_data[4];
-                for (int i = 0; i < 4; i++) {
-                    block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
-                    cache[d_i][index][flg_way].data[i] = block_data[i];
-                }
-                val_ret = cache[d_i][index][flg_way].data[word_offset];
-            } else {
-                for (int i = 0; i < 4; i++) {
-                    cache[d_i][index][flg_way].data[i] = 0x00000000;
-                }
-                val_ret = 0;
+            uint32_t block_addr = addr & ~0b1111; 
+            uint32_t block_data[4];
+            for (int i = 0; i < 4; i++) {
+                block_data[i] = *(uint32_t*)&mem[block_addr + i*4 - offset[addrs_range(block_addr + i*4)]];
+                cache[d_i][index][flg_way].data[i] = block_data[i];
             }
-        } else if(is_ram) {
-            uint32_t indx = (addr - offset[addrs_range(addr)]) & ~0x3;
-            uint32_t bit_shift = (addr & 0x3) * 8;
-            int32_t mask = 0xFF << bit_shift;
-            uint32_t current_val = *(uint32_t*)&mem[indx];
-            uint32_t new_val = value; 
-            
-            if(size == 0) new_val = (current_val & ~mask) | ((value & 0xFF) << bit_shift);
-            else if(size == 1) new_val = (current_val & ~mask) | ((value & 0xFFFF) << bit_shift);
-
-            *(uint32_t*)&mem[indx] = new_val;// write through
         }
     }
 
-    return val_ret;
 }
 
 
@@ -507,33 +542,33 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
 
 
     int cd = addrs_range(endereco);
-    if(cd < 0){
-        trap_capture( 7, endereco, saida);
-        return;
-    }
     uint32_t indx = endereco - offset[cd];
-    int call_cache = (cd == 0);
+    int call_cache = (cd == 0 || cd < 0);
 
     switch (funct3){
         case 0x0: /*Store Byte*/{
             if (call_cache) {
                 access_cache(endereco, 1, 'w', (dado & 0xFF), 0, saida);
-            } else{
-                if (endereco == 0x10000000) { // Transmissão de dados UART
-                    char byte_out = (char)(dado & 0xFF);
-                    if (terminal_out) {
-                        fputc(byte_out, terminal_out);
-                    } 
-                    mem[addr_lsr] |= RST_LSR; 
-                    uint8_t ier = mem[addr_ier];
-                    if (ier & 0x02) {
-                        mem[addr_pending] |= (1 << 10);
-                        mip |= (1 << 11);
-                        mem[addr_isr] = 0x02;
-                    } 
+                if(cd < 0){
+                    trap_capture( 7, endereco, saida);
+                    return;
                 }
-                mem[indx] = (uint8_t)(dado & 0xFF);
+            } 
+            if (endereco == 0x10000000) { // Transmissão de dados UART
+                char byte_out = (char)(dado & 0xFF);
+                if (terminal_out) {
+                    fputc(byte_out, terminal_out);
+                } 
+                mem[addr_lsr] |= RST_LSR; 
+                uint8_t ier = mem[addr_ier];
+                if (ier & 0x02) {
+                    mem[addr_pending] |= (1 << 10);
+                    mip |= (1 << 11);
+                    mem[addr_isr] = 0x02;
+                } 
             }
+            mem[indx] = (uint8_t)(dado & 0xFF);
+
             snprintf(left, sizeof left, "0x%08x:sb     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%02x\n",
                 left,
@@ -543,7 +578,12 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
         case 0x1: /*Store Half*/{
             if (call_cache) {
                 access_cache(endereco, 1, 'w', (dado & 0xFFFF), 1, saida);
-            }else *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
+                if(cd < 0){
+                    trap_capture( 7, endereco, saida);
+                    return;
+                }
+            }
+            *(uint16_t*)&mem[indx] = (uint16_t)(dado & 0xFFFF);
         
             snprintf(left, sizeof left, "0x%08x:sh     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%04x\n",
@@ -552,8 +592,14 @@ void S_type(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t rs2, uint8_t f
             break;
         }
         case 0x2: /*Store Word */{
-            if(call_cache) access_cache(endereco, 1, 'w', (uint32_t)dado, 2, saida);
-            else *(uint32_t*)&mem[indx] = (uint32_t)dado;
+            if(call_cache){
+                access_cache(endereco, 1, 'w', (uint32_t)dado, 2, saida);
+                if(cd < 0){
+                    trap_capture( 7, endereco, saida);
+                    return;
+                }
+            }
+            *(uint32_t*)&mem[indx] = (uint32_t)dado;
 
             snprintf(left, sizeof left, "0x%08x:sw     %s,0x%03x(%s)", pc, nomex[rs2], (imm & 0xFFF), nomex[rs1]);
             fprintf(saida, "%-37s mem[0x%08x]=0x%08x\n",
@@ -666,37 +712,30 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
 
     uint32_t endereco = x[rs1] + (int32_t)imm; 
     int cd = addrs_range(endereco);
+    if(cd == 0 || cd < 0) access_cache(endereco, 1, 'r', 0, 2, saida);
+
     if(cd < 0){
         trap_capture(5, endereco, saida);
         return;
     }
     uint32_t indx = endereco - offset[cd];
-    int call_cache = (cd == 0);
-    uint32_t word;
-    if(call_cache) word = access_cache(endereco, 1, 'r', 0, 2, saida);
-    uint32_t bit_shift = (endereco & 0x3) * 8; // (qual byte dentro da palavra)
-
     switch (funct3){
         case 0x0: /*Load Byte (lb) - extensão de sinal*/ {
-            if(call_cache){
-                x[rd] = (int32_t)(int8_t)((word >> bit_shift) & 0xFF);
-            }else{
-                 if(endereco == 0x10000000){ // Leitura de dados UART
-                    if(terminal_in){
-                        int c = fgetc(terminal_in);
-                        if (c != EOF) mem[indx] = (uint8_t)c; 
-                        else mem[indx] = (uint8_t)0;
-                    }
-                    mem[ADDRS_LSR - offset[3]] &= ~0x01;
-                    uint8_t isr_atual = mem[addr_isr];
-                    if ((isr_atual & 0x0F) == 0x04) { 
-                        mem[addr_isr] = RST_ISR; 
-                        mip &= ~(1 << 11); 
-                    }
+            if(endereco == 0x10000000){ // Leitura de dados UART
+                if(terminal_in){
+                    int c = fgetc(terminal_in);
+                    if (c != EOF) mem[indx] = (uint8_t)c; 
+                    else mem[indx] = (uint8_t)0;
                 }
-                x[rd] = (int32_t)(int8_t)mem[indx]; //mem é unsigned 
+                mem[ADDRS_LSR - offset[3]] &= ~0x01;
+                uint8_t isr_atual = mem[addr_isr];
+                if ((isr_atual & 0x0F) == 0x04) { 
+                    mem[addr_isr] = RST_ISR; 
+                    mip &= ~(1 << 11); 
+                }
             }
             
+            x[rd] = (int32_t)(int8_t)mem[indx]; //mem é unsigned 
             snprintf(left, sizeof left, "0x%08x:lb     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                     left,
@@ -704,14 +743,8 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x1: /*Load Half (lh) - extensão de sinal*/ {
-
-            if (call_cache) {
-                x[rd] = (int32_t)(int16_t)((word >> bit_shift) & 0xFFFF);
-            }else{
-                int16_t hword = *((int16_t*)&mem[indx]); // n tenho garantia q indx é alinhado
-                x[rd] = (int32_t)hword;
-            }
-
+            int16_t hword = *((int16_t*)&mem[indx]); // n tenho garantia q indx é alinhado
+            x[rd] = (int32_t)hword;
             snprintf(left, sizeof left, "0x%08x:lh     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                     left,
@@ -719,18 +752,13 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x2: /*Load Word (lw) - sem extensão*/{
-
-            if (call_cache) {
-                x[rd] = word;
-            } else {
-                if(endereco == 0x0c200004){
-                    if(mem[addr_pending] | (1 << 10)){
-                        mem[addr_pending] &=  ~(1 << 10);
-                        *(int32_t*)&mem[indx] = 0x0000000a;
-                    }else *(int32_t*)&mem[indx] = 0;
-                }
-                x[rd] = *(int32_t*)&mem[indx];
+            if(endereco == 0x0c200004){
+                if(mem[addr_pending] | (1 << 10)){
+                    mem[addr_pending] &=  ~(1 << 10);
+                    *(int32_t*)&mem[indx] = 0x0000000a;
+                }else *(int32_t*)&mem[indx] = 0;
             }
+            x[rd] = *(int32_t*)&mem[indx];
             snprintf(left, sizeof left, "0x%08x:lw     %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida,"%-37s %s=mem[0x%08x]=0x%08x\n",
                 left,
@@ -738,9 +766,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x4: /*Load Byte (U) (lbu) - extensão por 0*/{
-            if (call_cache) {
-                x[rd] = (int32_t)((word >> bit_shift) & 0xFF);
-            }else x[rd] = (int32_t)mem[indx];
+            x[rd] = (int32_t)mem[indx];
             snprintf(left, sizeof left, "0x%08x:lbu    %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                 left,
@@ -748,12 +774,8 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
             break;
         }
         case 0x5: /*Load Half (U) (lhu) - extensão por 0*/{
-            if (call_cache) {
-                x[rd] = (int32_t)((word >> bit_shift) & 0xFFFF);
-            }else{
-                uint16_t hword = *(uint16_t*)&mem[indx];
-                x[rd] = (int32_t)hword;
-            }
+            uint16_t hword = *(uint16_t*)&mem[indx];
+            x[rd] = (int32_t)hword;
             snprintf(left, sizeof left, "0x%08x:lhu    %s,0x%03x(%s)", pc, nomex[rd], imm & 0xFFF, nomex[rs1]);
             fprintf(saida, "%-37s %s=mem[0x%08x]=0x%08x\n",
                 left,
@@ -763,6 +785,7 @@ void I_type_load(uint32_t instrucao, int16_t imm, uint8_t rs1, uint8_t funct3, u
         default:
             trap_capture(2, instrucao, saida);
     }
+
 
 }
 
@@ -1042,7 +1065,7 @@ int main (int argc, char *argv[]){
 
     int count = 0;
 
-    while(run && ++count < 50000){
+    while(run){
 
         update_uart_lsr();
         
@@ -1053,7 +1076,7 @@ int main (int argc, char *argv[]){
             continue;
         }
 
-        uint32_t instrucao = access_cache(pc, 0, 'r', 0, 2, saida);
+        access_cache(pc, 0, 'r', 0, 2, saida);
 
         if ((pc % 4 != 0) || addrs_range(pc) != 0) {
             trap_capture(1, 0, saida);
@@ -1061,7 +1084,7 @@ int main (int argc, char *argv[]){
             continue; 
         }
 
-        //uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
+        uint32_t instrucao = ((uint32_t*)mem)[(pc - RAM_INF) >> 2];
         uint8_t opcode = instrucao & 0b1111111;              // bits 6:0
         uint8_t rd     = (instrucao >> 7) & 0b11111;         // bits 11:7
         uint8_t funct3 = (instrucao >> 12) & 0b111;          // bits 14:12
